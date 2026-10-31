@@ -2,7 +2,7 @@
 
 Turn the window you're in into a task: one key to start, one key to finish.
 
-**Status: alpha (0.1.0).** Built for Omarchy Quattro (4.0.0.alpha). See [Status](#status).
+**Status: alpha (0.1.0).** Targets Omarchy Quattro (4.0.0.alpha). See [Status](#status).
 
 <!-- Preview: add a screenshot or short GIF here once one exists. -->
 
@@ -84,12 +84,12 @@ o.bind("SUPER + D", "Finish task", taskhop_bin .. " finish")
 
 ### Conflict check
 
-- The default bindings in `/usr/share/omarchy/default/hypr/bindings/*.lua` on Omarchy 4.0.0.alpha do **not** use `SUPER + N`, `SUPER + ALT + N`, or `SUPER + D`. I checked by reading those files. Omarchy Quattro was not checked.
-- To check your own setup after you paste the bindings:
+- The default bindings in `/usr/share/omarchy/default/hypr/bindings/*.lua` on Omarchy 4.0.0.alpha do **not** use `SUPER + N`, `SUPER + ALT + N`, or `SUPER + D`. This was checked against those files. Omarchy Quattro was not checked.
+- To check your own setup, run this before you paste the bindings:
   ```bash
   hyprctl -j binds | jq -r '.[] | select(.key == "N" or .key == "D") | "\(.modmask) \(.key) \(.dispatcher)"'
   ```
-  Modmask `64` means `SUPER`, and `72` means `SUPER + ALT`. If a line for the same key and modmask belongs to another bind, that key is already taken.
+  Modmask `64` means `SUPER`, and `72` means `SUPER + ALT`. A line with `64` or `72` for `N` or `D` means that key is already bound. Find the other bind in `~/.config/hypr/bindings.lua` before you add taskhop's line.
 - To rebind a taken key, call `hl.unbind("SUPER + N")` before the matching `o.bind(...)` line, and note what the key did before.
 
 ## Usage
@@ -112,7 +112,7 @@ To send without following, press `SUPER + ALT + N` in step 2. The full menu rows
    ```bash
    omarchy plugin remove tithi-stack.taskhop
    ```
-4. Optional: delete leftover task records. They are runtime files, so logging out also clears them.
+4. Optional: delete leftover task records. They live in the runtime directory, which your session normally clears.
    ```bash
    rm -rf "${XDG_RUNTIME_DIR:?}/taskhop"
    ```
@@ -122,7 +122,7 @@ To send without following, press `SUPER + ALT + N` in step 2. The full menu rows
 - **The key does nothing.** Cause: another taskhop action holds the lock, and the helper exits silently when it cannot get it. Or the bind did not load. Fix: wait a second and press again. If it still does nothing, run `hyprctl configerrors`.
 - **Notification: "No window focused".** Cause: no window had focus when you pressed `SUPER + N`. Fix: focus a window and press it again.
 - **Notification: "This workspace isn't a task".** Cause: `SUPER + D` ran on a plain workspace. Fix: switch to the task workspace, then press `SUPER + D`.
-- **An error appears in no notification.** Cause: helper errors, such as a failed `hyprctl` call, go to stderr, and a keybinding does not show stderr. Fix: run the same command from a terminal to see the message.
+- **Error text, but no notification.** Cause: helper errors, such as a failed `hyprctl` call, go to stderr, and a keybinding does not show stderr. Fix: run the same command from a terminal to see the message.
 - **`XDG_RUNTIME_DIR is required`.** Cause: the variable is not set in that shell. Fix: run the command from your desktop session.
 
 ## FAQ
@@ -130,7 +130,7 @@ To send without following, press `SUPER + ALT + N` in step 2. The full menu rows
 - **Does it change my Hyprland config?** No. You paste the bindings yourself. The plugin ships a helper script and a bar widget.
 - **Does it use the network or sudo?** No. It runs only local commands. See [SECURITY.md](SECURITY.md).
 - **Can I keep using numbered workspaces?** Yes. A task takes the lowest unused number while it exists. See [Workspace numbers](docs/how-it-works.md#workspace-numbers).
-- **Does it work with a legacy `.conf` Hyprland config?** Unverified. Only the Lua form is documented here. Do not translate it yourself until it is verified.
+- **Does it work with a legacy `.conf` Hyprland config?** Unverified. Only the Lua form is documented.
 - **Is it in a plugin marketplace?** Not yet.
 
 ## Status
