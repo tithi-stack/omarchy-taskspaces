@@ -37,11 +37,23 @@ from test_setup import SetupTests
 case = SetupTests()
 case.setUp()
 try:
-    print('CLI: taskspaces setup --dry-run (mock consent and compositor)')
+    print('CLI: taskspaces setup --dry-run including browser (mock consent and compositor)')
+    case.support_browser()
+    case.cfg['choices'] = ['Add a "new browser window here" shortcut', 'Yes']
     result = case.run_setup('--dry-run')
     print(result.stdout)
+    assert ' browser")' in result.stdout
     case.unchanged()
     assert not (case.root / 'state').exists()
     print('PASS: consented setup preview wrote no bindings, backups or state and did not reload.')
+    print('CLI: taskspaces setup --dry-run upgrading three shortcuts (mock consent and compositor)')
+    core = case.core_block()
+    case.support_browser()
+    case.cfg['choices'] = ['Add a "new browser window here" shortcut', 'Yes']
+    result = case.run_setup('--dry-run')
+    print(result.stdout)
+    assert ' browser")' in result.stdout
+    case.unchanged(core)
+    print('PASS: browser upgrade preview changed no bindings, wrote no backups and did not reload.')
 finally:
     case.doCleanups()

@@ -65,7 +65,7 @@ Send and finish also need the `XDG_RUNTIME_DIR` variable set. Setup and browser 
    ```bash
    "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/tithi-stack.taskspaces/bin/taskspaces" setup
    ```
-   Setup backs up your bindings first, checks the reload, and restores the backup if verification fails. It reports the keys you chose. **Show me the lines first** previews the exact block; **No, I'll add them myself** leaves your file alone.
+   Setup offers send, silent send and finish, plus an optional **new browser window here** shortcut for a supported browser. It backs up your bindings first, checks the reload, and restores the backup if verification fails. It reports the keys you chose. **Show me the lines first** previews the exact block; **No, I'll add them myself** leaves your file alone.
 4. Optional: move the widget to the center of your bar:
    ```bash
    omarchy bar move tithi-stack.taskspaces --section center
@@ -81,6 +81,8 @@ If a shortcut is already taken, setup names what uses it and offers a free alter
 
 Updates: `omarchy plugin update tithi-stack.taskspaces`. The bindings point at the helper inside the plugin folder, so you do not change them after an update.
 
+Already have setup's three Taskspaces shortcuts? Run setup again to add only the optional browser shortcut. If a `taskspaces browser` shortcut already exists in your bindings file or live shortcuts, setup reports its key and changes nothing.
+
 ## Bindings
 
 Setup is the primary path. After the optional PATH link, run `taskspaces setup` to check whether shortcuts are already installed. `taskspaces setup --dry-run` asks the same questions and prints the block after Yes, without writing or reloading.
@@ -95,6 +97,8 @@ local taskspaces_bin = os.getenv("HOME") .. "/.config/omarchy/plugins/tithi-stac
 o.bind("SUPER + N", "Send window to task", taskspaces_bin .. " send")
 o.bind("SUPER + ALT + N", "Send window to task (stay here)", taskspaces_bin .. " send --silent")
 o.bind("SUPER + D", "Finish task", taskspaces_bin .. " finish")
+-- Optional: choose a free key first; Super+Alt+Return may be taken.
+-- o.bind("SUPER + ALT + RETURN", "New browser window here", taskspaces_bin .. " browser")
 ```
 
 These are suggested defaults. Use the actual keys you chose in setup or in your manual bindings. After manual changes, run `hyprctl reload` and `hyprctl configerrors`.
@@ -104,6 +108,7 @@ These are suggested defaults. Use the actual keys you chose in setup or in your 
 | `SUPER + N` | Send the focused window to a task, then follow it | `taskspaces send` |
 | `SUPER + ALT + N` | Send the focused window to a task, and stay here | `taskspaces send --silent` |
 | `SUPER + D` | Finish the current task | `taskspaces finish` |
+| `SUPER + ALT + RETURN` (optional; may be taken) | Open a new browser window here | `taskspaces browser` |
 
 `taskspaces --help` prints usage. `taskspaces --version` prints `0.1.0`.
 
@@ -134,6 +139,8 @@ For a task started by moving a window, kept windows return to its starting works
 Omarchy's stock browser launcher can hand a request to the running Chromium browser; when given a URL, it also focuses an existing browser window, which can take you back to that window's workspace. `taskspaces browser` requests a fresh window here with an existing profile, offering a profile picker only when there is more than one; it works on any workspace and leaves the stock `Super+Shift+Return` shortcut untouched.
 
 Supported Chromium browsers: Chromium, Google Chrome (`google-chrome-stable`), Brave, Brave Origin, and Microsoft Edge (`microsoft-edge-stable`). Firefox-based browsers, including Firefox and Zen, and other browsers are not supported yet. With no saved profiles, it reports `No browser profiles found.`; open your browser normally first to create one.
+
+Setup offers this as a separate optional shortcut before the final confirmation. It starts with `Super+Alt+Return`; stock Omarchy can already use that key, so setup checks and offers a free alternative, your own key, or a skip. The stock browser shortcut stays in place. Removing setup's shortcuts with `taskspaces setup --remove` also removes its optional browser line.
 
 ## Uninstall
 

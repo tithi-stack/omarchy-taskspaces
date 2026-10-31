@@ -40,7 +40,8 @@ if cmd == 'hyprctl':
             text = Path(os.environ['TASKSPACES_BINDINGS_FILE']).read_text()
             if 'local taskspaces_bin = ' in text and '-- >>> taskspaces' in text:
                 helper = json.loads(re.search(r'local taskspaces_bin = (.+)', text)[1])
-                for key, action in re.findall(r'o.bind\("([^"]+)", "[^"]+", taskspaces_bin \.\. " (send(?: --silent)?|finish)"\)', text):
+                for key, action in re.findall(r'o.bind\("([^"]+)", "[^"]+", taskspaces_bin \.\. " (send(?: --silent)?|finish|browser)"\)', text):
+                    if action == 'browser' and cfg.get('missing_browser'): continue
                     mods = {'SUPER':64, 'CTRL':4, 'ALT':8, 'SHIFT':1}
                     parts = key.split(' + ')
                     binds.append({'modmask':sum(mods[m] for m in parts[:-1]), 'key':parts[-1].lower(),
@@ -82,6 +83,7 @@ elif cmd == 'omarchy-menu-input':
     value = cfg.setdefault('inputs', []).pop(0) if cfg.get('inputs') else ''
     save()
     print(value)
+elif cmd == 'omarchy-cmd-default-browser': print('test-browser.desktop')
 elif cmd not in ('omarchy-notification-send', 'notify-send'): raise RuntimeError(cmd)
 '''
 
@@ -106,8 +108,12 @@ class SetupTests(unittest.TestCase):
         mock = self.root / 'mock'
         mock.write_text(MOCK)
         mock.chmod(0o755)
-        for name in ('hyprctl', 'omarchy-menu-select', 'omarchy-menu-input', 'omarchy-notification-send'):
+        for name in ('hyprctl', 'omarchy-menu-select', 'omarchy-menu-input', 'omarchy-notification-send',
+                     'omarchy-cmd-default-browser'):
             (self.bin / name).symlink_to(mock)
+        self.desktop = self.root / '.local/share/applications/test-browser.desktop'
+        self.desktop.parent.mkdir(parents=True)
+        self.desktop.write_text('[Desktop Entry]\nExec=firefox %U\n')
         # No ambient PATH: missing-tool tests cannot fall through to a real compositor.
         for name in ('python3',):
             (self.bin / name).symlink_to(shutil.which(name))
@@ -457,6 +463,171 @@ class SetupTests(unittest.TestCase):
 
     def test_invalid_flags(self):
         self.run_setup('--remove', '--dry-run', expected=2)
+        self.unchanged()
+
+    def support_browser(self):
+        self.desktop.write_text('[Desktop Entry]\nExec=chromium %U\n')
+
+    def core_block(self):
+        self.desktop.write_text('[Desktop Entry]\nExec=firefox %U\n')
+        self.bindings.write_text(ORIGINAL)
+        self.cfg = {'choices': ['Yes']}
+        self.run_setup()
+        text = self.bindings.read_text()
+        (self.root / 'events.jsonl').unlink()
+        for backup in self.backups():
+            backup.unlink()
+        self.cfg = {}
+        return text
+
+    def test_browser_accepted_exact_block_consent_notification_and_remove(self):
+        self.support_browser()
+        self.cfg['choices'] = ['Add a "new browser window here" shortcut', 'Yes']
+        result = self.run_setup()
+        browser_line = 'o.bind("SUPER + ALT + RETURN", "New browser window here", taskspaces_bin .. " browser")\n'
+        block = '\n'.join([START, 'local taskspaces_bin = ' + json.dumps(str(SCRIPT)),
+                           'o.bind("SUPER + N", "Send window to task", taskspaces_bin .. " send")',
+                           'o.bind("SUPER + ALT + N", "Send window to task (stay here)", taskspaces_bin .. " send --silent")',
+                           'o.bind("SUPER + D", "Finish task", taskspaces_bin .. " finish")', '']) + browser_line + END + '\n'
+        self.assertEqual(self.bindings.read_text(), ORIGINAL + block)
+        menus = self.events('omarchy-menu-select')
+        self.assertEqual(menus[0][0], 'Browser windows can jump back to where the browser was first opened')
+        self.assertEqual(menus[0][1:3], ['󰀄\tAdd a "new browser window here" shortcut\tSuper+Alt+Return',
+                                        '󰁍\tNot now\tyou can run taskspaces browser any time'])
+        for label in ('Super+N send', 'Super+Alt+N silent', 'Super+D finish', 'Super+Alt+Return browser'):
+            self.assertIn(label, menus[1][1])
+        for menu in menus:
+            for row in menu[1:-3]:
+                self.assertLessEqual(len(row.split('\t')[1]), 50)
+        self.assertIn('Super+Alt+Return opens a new browser window here', result.stderr)
+        self.assertEqual(self.backups()[0].read_text(), ORIGINAL)
+        self.cfg['choices'] = ['Remove']
+        self.run_setup('--remove')
+        self.assertEqual(self.bindings.read_text(), ORIGINAL)
+
+    def test_browser_declined_or_cancelled_still_sets_up_core(self):
+        self.support_browser()
+        for choice in ('Not now', 'cancel'):
+            with self.subTest(choice=choice):
+                self.bindings.write_text(ORIGINAL)
+                self.cfg = {'choices': [choice, 'Yes']}
+                self.run_setup()
+                self.assertIn(' finish")', self.bindings.read_text())
+                self.assertNotIn(' browser")', self.bindings.read_text())
+
+    def test_unsupported_browser_step_not_offered(self):
+        for browser in ('firefox', 'zen', 'other-browser'):
+            with self.subTest(browser=browser):
+                self.desktop.write_text('[Desktop Entry]\nExec=' + browser + ' %U\n')
+                self.bindings.write_text(ORIGINAL)
+                self.cfg = {'choices': ['Yes']}
+                self.run_setup()
+        menus = self.events('omarchy-menu-select')
+        self.assertEqual(len(menus), 3)
+        self.assertTrue(all(menu[0] == 'Add Taskspaces shortcuts?' for menu in menus))
+
+    def test_browser_conflict_alternative_own_key_and_skip(self):
+        self.support_browser()
+        # These stock keys are present on the target Omarchy, including
+        # conditional defaults: none may be suggested as a free alternative.
+        (self.stock / 'applications.lua').write_text(
+            'o.bind("SUPER + ALT + RETURN", "Tmux", "terminal-tmux")\n'
+            'o.bind("SUPER + CTRL + RETURN", "Another application", "terminal-app")\n'
+            'o.bind("SUPER + SHIFT + B", "Browser", "browser")\n'
+            'o.bind("SUPER + SHIFT + RETURN", "Browser", "browser")\n')
+        for choice, key in (('Alternative', 'SUPER + CTRL + SHIFT + RETURN'),
+                            ('Pick', 'SUPER + F8'), ('Skip', None)):
+            with self.subTest(choice=choice):
+                self.bindings.write_text(ORIGINAL)
+                self.cfg = {'choices': ['Add a "new browser window here" shortcut', choice, 'Yes'],
+                            'inputs': ['SUPER + F8']}
+                self.run_setup()
+                text = self.bindings.read_text()
+                if key:
+                    self.assertIn('o.bind("' + key + '", "New browser window here"', text)
+                else:
+                    self.assertNotIn(' browser")', text)
+                self.assertNotIn('o.bind("SUPER + SHIFT + RETURN"', text)
+
+    def test_browser_live_conflict_rejects_taken_custom_key(self):
+        self.support_browser()
+        self.cfg = {'binds': [bind(72, 'Return'), bind(64, 'F8')],
+                    'choices': ['Add a "new browser window here" shortcut', 'Pick', 'Yes'],
+                    'inputs': ['SUPER + N', 'SUPER + F8', 'SUPER + F9']}
+        self.run_setup()
+        self.assertIn('SUPER + F9', self.bindings.read_text())
+        self.assertEqual(len(self.events('omarchy-menu-input')), 3)
+
+    def test_upgrade_only_offers_browser_preserves_core_and_surroundings(self):
+        core = self.core_block() + '-- Keep this tail\n'
+        self.bindings.write_text(core)
+        self.support_browser()
+        self.cfg['choices'] = ['Add a "new browser window here" shortcut', 'Yes']
+        self.run_setup()
+        expected = core.replace(END, 'o.bind("SUPER + ALT + RETURN", "New browser window here", taskspaces_bin .. " browser")\n' + END)
+        self.assertEqual(self.bindings.read_text(), expected)
+        self.assertEqual(self.backups()[0].read_text(), core)
+        menus = self.events('omarchy-menu-select')
+        self.assertEqual(len(menus), 2)
+        self.assertIn('Super+Alt+Return browser', menus[1][1])
+        self.assertNotIn('Super+N send', menus[1][1])
+        self.assertEqual(self.cfg['reload_files'], [expected])
+
+    def test_upgrade_declined_or_conflict_skipped_writes_nothing(self):
+        core = self.core_block()
+        self.support_browser()
+        for choices, live in ((['Not now'], []),
+                              (['Add a "new browser window here" shortcut', 'Skip'], [bind(72, 'Return')])):
+            self.cfg = {'choices': choices, 'binds': live}
+            self.run_setup()
+            self.unchanged(core)
+
+    def test_browser_already_managed_hand_pasted_or_live_reports_key(self):
+        self.support_browser()
+        browser_line = 'o.bind("SUPER + F8", "New browser window here", taskspaces_bin .. " browser")\n'
+        for text, live, key in (
+                (START + '\n' + MANUAL + browser_line + END + '\n', [], 'SUPER + F8'),
+                (MANUAL + browser_line, [], 'SUPER + F8'),
+                ('o.bind("SUPER + F9", "Browser", "taskspaces browser")\n', [], 'SUPER + F9'),
+                (ORIGINAL, [dict(modmask=64, key='F10', dispatcher='exec', arg=str(SCRIPT) + ' browser')], 'Super+F10')):
+            with self.subTest(key=key, text=text):
+                self.bindings.write_text(text)
+                self.cfg = {'binds': live}
+                result = self.run_setup()
+                self.assertIn('Already set up', result.stderr)
+                self.assertIn(key, result.stderr)
+                self.unchanged(text)
+        self.assertEqual(self.events('omarchy-menu-select'), [])
+
+    def test_browser_dry_run_including_upgrade_writes_nothing(self):
+        for upgrade in (False, True):
+            with self.subTest(upgrade=upgrade):
+                core = self.core_block() if upgrade else ORIGINAL
+                self.support_browser()
+                self.cfg = {'choices': ['Add a "new browser window here" shortcut', 'Yes']}
+                result = self.run_setup('--dry-run')
+                self.assertIn(' browser")', result.stdout)
+                self.unchanged(core)
+
+    def test_browser_verification_failure_rolls_back_new_and_upgraded_block(self):
+        for upgrade in (False, True):
+            with self.subTest(upgrade=upgrade):
+                self.desktop.write_text('[Desktop Entry]\nExec=firefox %U\n')
+                core = self.core_block() if upgrade else ORIGINAL
+                self.support_browser()
+                self.cfg = {'choices': ['Add a "new browser window here" shortcut', 'Yes'], 'missing_browser': True}
+                result = self.run_setup(expected=1)
+                self.assertIn('restored and reloaded', result.stderr)
+                self.assertEqual(self.bindings.read_text(), core)
+                self.assertEqual(self.backups()[-1].read_text(), core)
+                self.assertEqual(self.cfg['reloaded'], 2)
+
+    def test_browser_key_taken_during_final_consent_changes_nothing(self):
+        self.support_browser()
+        self.cfg = {'choices': ['Add a "new browser window here" shortcut', 'Yes'],
+                    'take_on_menu': bind(72, 'Return')}
+        result = self.run_setup(expected=1)
+        self.assertIn('just taken', result.stderr)
         self.unchanged()
 
     def test_non_newline_file_is_separated_from_block(self):

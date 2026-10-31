@@ -72,6 +72,9 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
         self.assertEqual(self.state.read_bytes() if self.state.exists() else None, before)
         self.assertFalse((self.root / 'config/hypr').exists())
+        for command in ('omarchy-launch-browser', 'omarchy-cmd-browser-handoff',
+                        'omarchy-hyprland-focus-app', 'hyprctl'):
+            self.assertEqual(self.events(command), [])
         return result
 
     def events(self, command):
@@ -172,6 +175,30 @@ class BrowserTests(unittest.TestCase):
         self.launch()
         # Let the mock finish before deleting its temporary directory.
         time.sleep(1)
+
+    def test_desktop_lookup_precedence_absolute_exec_and_home_config_fallback(self):
+        nix = self.root / '.nix-profile/share/applications/test-browser.desktop'
+        nix.parent.mkdir(parents=True)
+        nix.write_text('[Desktop Entry]\nExec=' + str(self.bin / 'chromium') + ' %U\n')
+        self.profiles({'Default': {'name': 'Local'}})
+        self.run_browser()
+        self.assertEqual(self.launch()[1][1], 'chromium')
+        (self.root / 'launch.json').unlink()
+        self.desktop.unlink()
+        self.env.pop('XDG_CONFIG_HOME')
+        self.state = self.root / '.config/chromium/Local State'
+        self.state.parent.mkdir(parents=True)
+        self.profiles({'Profile 1': {'name': 'Local'}})
+        self.run_browser()
+        self.assertEqual(self.launch()[1], ['--', str(self.bin / 'chromium'), '--profile-directory=Profile 1',
+                                           '--new-window', 'about:blank'])
+
+    def test_missing_supported_browser_reports_installation_problem(self):
+        self.profiles({'Default': {'name': 'Local'}})
+        (self.bin / 'chromium').unlink()
+        result = self.run_browser(expected=1)
+        self.assertIn('Cannot find Chromium', result.stderr)
+        self.assertFalse((self.root / 'launch.json').exists())
 
     def test_help_lists_browser_and_browser_rejects_flags(self):
         for args, expected in ((['--help'], 0), (['browser', '--dry-run'], 2)):

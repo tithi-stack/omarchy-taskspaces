@@ -418,10 +418,12 @@ END = '-- <<< taskspaces <<<'
 MODS = {'SUPER': 64, 'CTRL': 4, 'ALT': 8, 'SHIFT': 1}
 ORDER = ('SUPER', 'CTRL', 'SHIFT', 'ALT')
 DESCRIPTIONS = {'send': 'Send window to task', 'silent': 'Send window to task (stay here)',
-                'finish': 'Finish task'}
-COMMANDS = {'send': 'send', 'silent': 'send --silent', 'finish': 'finish'}
+                'finish': 'Finish task', 'browser': 'New browser window here'}
+COMMANDS = {'send': 'send', 'silent': 'send --silent', 'finish': 'finish', 'browser': 'browser'}
 CANDIDATES = {'send': ('SUPER + SHIFT + N', 'SUPER + CTRL + N', 'SUPER + T'),
-              'finish': ('SUPER + SHIFT + D', 'SUPER + CTRL + D', 'SUPER + E')}
+              'finish': ('SUPER + SHIFT + D', 'SUPER + CTRL + D', 'SUPER + E'),
+              'browser': ('SUPER + CTRL + SHIFT + RETURN', 'SUPER + SHIFT + ALT + RETURN',
+                          'SUPER + CTRL + SHIFT + B')}
 
 class SetupError(Exception):
     pass
@@ -595,7 +597,7 @@ def installed_keys(text):
         command = match[5]
         own = 'taskspaces' in command or any(re.search(r'\b' + re.escape(a) + r'\b', command)
                                                     for a in aliases)
-        action = re.search(r'[\'" ](send(?:\s+--silent)?|finish)\s*[\'"]', command)
+        action = re.search(r'[\'" ](send(?:\s+--silent)?|finish|browser)\s*[\'"]', command)
         if own and action:
             result.append((match[2], action[1], text[:match.start()].count('\n') + 1))
     return result
@@ -705,6 +707,29 @@ def consent(selected, block, remove):
     raise SetupError('Setup needs the Omarchy menu or a terminal for consent; nothing changed.')
 
 
+def offer_browser():
+    key = 'Super+Alt+Return'
+    if shutil.which('omarchy-menu-select'):
+        label = 'Add a "new browser window here" shortcut'
+        return menu('Browser windows can jump back to where the browser was first opened',
+                    ['󰀄\t' + label + '\t' + key,
+                     '󰁍\tNot now\tyou can run taskspaces browser any time']) == label
+    if os.isatty(3):
+        print('Add a new browser window here shortcut (' + key + ')? [y/N] ', end='', flush=True)
+        with os.fdopen(os.dup(3)) as terminal:
+            return terminal.readline().strip().lower() in ('y', 'yes')
+    return False
+
+
+def runs_browser(command):
+    try:
+        args = shlex.split(command)
+        return any(Path(word).name == 'taskspaces' and args[i + 1] == 'browser'
+                   for i, word in enumerate(args[:-1]))
+    except ValueError:
+        return False
+
+
 def atomic_write(target, data, mode):
     pending = None
     try:
@@ -750,10 +775,17 @@ def setup():
         text = original.decode('utf-8')
         span = managed_span(text)
         existing = installed_keys(text)
-        if not remove and (span or existing):
-            keys = ', '.join(clean(key) + ' ' + action for key, action, _ in existing)
-            message('Already set up: ' + (keys or 'see the taskspaces block in your bindings file') + '.')
-            return
+        supported = False
+        if not remove:
+            browser_keys = [(key, action, line) for key, action, line in existing if action == 'browser']
+            if browser_keys:
+                message('Already set up: ' + ', '.join(clean(key) + ' browser' for key, _, _ in browser_keys) + '.')
+                return
+            supported = default_browser()[2] is not None
+            if (span or existing) and (not span or not supported):
+                keys = ', '.join(clean(key) + ' ' + action for key, action, _ in existing)
+                message('Already set up: ' + (keys or 'see the taskspaces block in your bindings file') + '.')
+                return
         if remove and not span:
             if existing:
                 message('Nothing to remove automatically; delete the hand-added taskspaces bindings on lines ' +
@@ -768,6 +800,12 @@ def setup():
         if not shutil.which('hyprctl'):
             raise SetupError('Cannot read live shortcuts: hyprctl is missing; run setup in your desktop session.')
         live = binds()
+        if not remove:
+            browser_keys = [key_text(bind_key(bind), True) for bind in live
+                            if bind['dispatcher'] == 'exec' and runs_browser(bind['arg'])]
+            if browser_keys:
+                message('Already set up: ' + ', '.join(key + ' browser' for key in browser_keys) + '.')
+                return
         selected = {}
         if remove:
             block = text[span[0]:span[1]]
@@ -779,7 +817,12 @@ def setup():
             updated = (text[:span[0]] + text[span[1]:]).encode('utf-8')
         else:
             stock = stock_keys()
-            for action in ('send', 'silent', 'finish'):
+            for raw_key, _, _ in existing:
+                try:
+                    stock[parse_key(raw_key)] = 'existing Taskspaces shortcut'
+                except ValueError:
+                    continue
+            for action in (() if span else ('send', 'silent', 'finish')):
                 if action == 'silent':
                     if 'send' not in selected:
                         continue
@@ -790,15 +833,28 @@ def setup():
                 key = choose_key(wanted, action, selected, stock)
                 if key:
                     selected[action] = key
+            if supported and offer_browser():
+                key = choose_key(parse_key('SUPER + ALT + RETURN'), 'browser', selected, stock)
+                if key:
+                    selected['browser'] = key
             if not selected:
                 message('No shortcuts selected. Taskspaces still works from the command line.')
                 return
-            lines = [START, 'local taskspaces_bin = ' + json.dumps(shlex.quote(str(helper)), ensure_ascii=False)]
+            lines = [] if span else [START, 'local taskspaces_bin = ' + json.dumps(shlex.quote(str(helper)), ensure_ascii=False)]
             for action, key in selected.items():
                 lines.append('o.bind(' + json.dumps(key_text(key)) + ', ' + json.dumps(DESCRIPTIONS[action]) +
                              ', taskspaces_bin .. " ' + COMMANDS[action] + '")')
-            block = '\n'.join(lines + [END, ''])
-            updated = original + (b'\n' if original and not original.endswith(b'\n') else b'') + block.encode('utf-8')
+            if span:
+                # Preserve the old bindings and surrounding bytes on upgrade;
+                # only the newly chosen browser key needs consent and checking.
+                old_block = text[span[0]:span[1]]
+                marker = old_block.rfind(END)
+                newline = '\r\n' if '\r\n' in old_block else '\n'
+                block = old_block[:marker] + newline.join(lines) + newline + old_block[marker:]
+                updated = (text[:span[0]] + block + text[span[1]:]).encode('utf-8')
+            else:
+                block = '\n'.join(lines + [END, ''])
+                updated = original + (b'\n' if original and not original.endswith(b'\n') else b'') + block.encode('utf-8')
         if not consent(selected, block, remove):
             message('No changes made; your shortcuts are still in place.' if remove else
                     'No changes made; the README shows how to add shortcuts yourself.')
@@ -862,6 +918,8 @@ def setup():
                 parts.append(key_text(selected['finish'], True) + ' finishes it')
             if 'silent' in selected:
                 parts.append(key_text(selected['silent'], True) + ' sends without following')
+            if 'browser' in selected:
+                parts.append(key_text(selected['browser'], True) + ' opens a new browser window here')
             message('Ready: ' + ', '.join(parts) + '.')
 
 try:

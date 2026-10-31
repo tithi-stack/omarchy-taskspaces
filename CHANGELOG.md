@@ -31,6 +31,7 @@ Planned initial public release. Target: Omarchy Quattro (4.0.0.alpha).
 
 - `taskspaces setup`: consented shortcut setup with conflict alternatives, previews, backups, verified reload and rollback; `--remove` undoes its managed block and `--dry-run` prints without writing.
 - `taskspaces browser`: opens a new window here with an existing Chromium, Chrome, Brave, Brave Origin or Edge profile; multiple profiles get a picker. It leaves Omarchy's browser launcher and stock shortcuts unchanged.
+- Setup offers an optional new-browser-window shortcut for supported browsers, with conflict alternatives and the same consent, backup and verified rollback. Existing three-shortcut blocks can add only the browser line; existing browser shortcuts are reported and left alone. Preview and removal include the optional shortcut.
 - `taskspaces send`: moves the focused window to a named task workspace. The name is suggested from the window title.
 - `taskspaces send --silent`: the same, without following the window.
 - `taskspaces finish`: closes the task's windows or moves them back, after a confirmation menu.
