@@ -30,7 +30,7 @@ omarchy plugin validate .
 
 ## Continuous integration
 
-GitHub Actions runs the test command on every push and pull request. The workflow is in `.github/workflows/ci.yml`.
+GitHub Actions runs the tests, ShellCheck on `bin/taskhop`, and a dry-run check on every push and pull request. The workflow is in `.github/workflows/ci.yml`.
 
 ## Making a change
 
