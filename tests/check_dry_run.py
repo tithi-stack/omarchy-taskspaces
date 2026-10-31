@@ -31,3 +31,17 @@ try:
     print('PASS: no real compositor called; dry paths dispatched nothing and wrote no task state or lock.')
 finally:
     case.doCleanups()
+
+from test_setup import SetupTests
+
+case = SetupTests()
+case.setUp()
+try:
+    print('CLI: taskspaces setup --dry-run (mock consent and compositor)')
+    result = case.run_setup('--dry-run')
+    print(result.stdout)
+    case.unchanged()
+    assert not (case.root / 'state').exists()
+    print('PASS: consented setup preview wrote no bindings, backups or state and did not reload.')
+finally:
+    case.doCleanups()

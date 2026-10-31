@@ -21,12 +21,13 @@ All notable changes to this project are documented here. The format is based on
 - Quotes and backslashes are removed from fallback app names before they appear in task labels, the finish app summary, or prompts.
 - Digit-only task names get a `Task ` prefix, and duplicate checks account for numbered workspaces.
 
-## [0.1.0] - 2026-10-30
+## [0.1.0] - Unreleased
 
-Initial public release. Target: Omarchy Quattro (4.0.0.alpha).
+Planned initial public release. Target: Omarchy Quattro (4.0.0.alpha).
 
 ### Added
 
+- `taskspaces setup`: consented shortcut setup with conflict alternatives, previews, backups, verified reload and rollback; `--remove` undoes its managed block and `--dry-run` prints without writing.
 - `taskspaces send`: moves the focused window to a named task workspace. The name is suggested from the window title.
 - `taskspaces send --silent`: the same, without following the window.
 - `taskspaces finish`: closes the task's windows or moves them back, after a confirmation menu.

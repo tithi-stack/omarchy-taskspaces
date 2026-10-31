@@ -8,7 +8,31 @@ This page describes Taskspaces 0.1.0. The automated tests use mock commands. Oma
 - **Low mental load:** you never pick a workspace number, and you keep no per-workspace shortcuts. Three keys cover send, silent send, and finish.
 - **Safe close:** finish sends each window a normal close request, so an app's own unsaved-changes prompt can still appear (not tested here).
 - **No force-kill:** Taskspaces never kills a process. A window that stays open keeps its task unfinished.
-- **Nothing edits your config:** Taskspaces does not change Hyprland or Omarchy settings. You paste the bindings yourself.
+- **Consent before config changes:** only setup edits your Hyprland bindings, after you choose Yes. Installing the plugin does not run setup.
+
+## Setup
+
+Run `taskspaces setup` (or the full helper path from the README). Setup needs no `XDG_RUNTIME_DIR`. It reads only `${XDG_CONFIG_HOME:-$HOME/.config}/hypr/bindings.lua` as the user bindings file. `TASKSPACES_BINDINGS_FILE` overrides that path for tests.
+
+1. It checks for its managed block or hand-added `taskspaces` send/finish bindings. If found, it reports the configured keys and exits without changing anything.
+2. It reads `hyprctl binds -j`. An unreadable reply or missing `hyprctl` stops setup. Modifier masks and keys are compared without regard to key letter case. Omarchy's stock bindings in `/usr/share/omarchy/default/hypr/bindings/*.lua` also reserve keys.
+3. The suggested defaults are `Super+N` for send, the chosen send key plus Alt for silent send, and `Super+D` for finish. A taken key opens a menu naming its current action. **Use … instead** offers the first free candidate: Shift+N, Ctrl+N, then T with Super for send; Shift+D, Ctrl+D, then E with Super for finish. Silent alternatives add Alt to send's candidate list. **Pick my own key…** accepts modifiers and a letter, number, function key, or named navigation key, with up to three attempts. **Skip this shortcut** keeps the CLI available. Skipping send also skips silent send.
+4. A final menu lists the real keys in grey. **Yes, add them** permits the write; **Show me the lines first** prints the exact block and returns to the menu; **No, I'll add them myself** changes nothing. Without the menu helper, a terminal gets the lines and a y/n prompt; without either, setup stops. Conflicting keys are skipped when the menu helper is unavailable.
+5. After Yes, setup rechecks the file and live keys, saves a backup, appends atomically, reloads, and verifies. `taskspaces setup --dry-run` uses the same menus but prints the block after Yes and writes and reloads nothing.
+
+The appended block has these exact marker lines around a helper variable and the selected `o.bind(...)` calls:
+
+```lua
+-- >>> taskspaces (added by `taskspaces setup`; undo with `taskspaces setup --remove`) >>>
+-- The helper variable and chosen bindings go here.
+-- <<< taskspaces <<<
+```
+
+Backups live at `${XDG_STATE_HOME:-$HOME/.local/state}/taskspaces/backups/bindings.lua.<UTC timestamp>`. The backup contains the original bytes. The write uses a temporary file beside the target and a rename, preserving file permissions. A symlink stays intact: setup writes its resolved target. A missing or unwritable bindings file is left alone, with a message explaining what to fix.
+
+Verification requires `hyprctl reload` to succeed, no new lines in `hyprctl configerrors` compared with the pre-write reply, and each chosen key to appear in `hyprctl binds -j` as an exec binding to this helper and the right action. Failure restores the backup atomically and reloads again. If another program changes the bindings during verification, setup leaves those edits intact and asks you to restore the named backup yourself. If the second reload fails, the message asks you to reload yourself and gives the backup path. Pre-existing config errors do not count as new errors.
+
+`taskspaces setup --remove` asks for consent, backs up the file, removes exactly the managed block between its markers, then reloads and verifies that its shortcuts are gone. It preserves surrounding content. With no block it says there is nothing to remove. Hand-pasted bindings are never removed; setup gives their line numbers instead. Damaged or repeated markers stop setup for manual inspection.
 
 ## Terms
 
@@ -77,7 +101,7 @@ With no windows, the task finishes without opening a menu and focus goes to that
 
 - A new task takes the lowest positive workspace number that no workspace currently uses. With workspaces 1, 2, and 4 in use, a new task takes 3.
 - While the task exists, pressing `SUPER + 3` goes to the task, because the task is workspace 3. This follows from the number rule. It is not tested on a live desktop.
-- Taskspaces does not rebind keys or rename numbered workspaces, except for the number a task takes.
+- Send and finish do not rebind keys. They only rename the workspace number a task takes; setup adds shortcuts separately with consent.
 - When an in-place task finishes, its number becomes its name again.
 
 ## Files and state
@@ -85,7 +109,7 @@ With no windows, the task finishes without opening a menu and focus goes to that
 - **Task records:** one JSON file per task, at `$XDG_RUNTIME_DIR/taskspaces/<workspace id>.json`. Each record holds the task name, its workspace number, the starting workspace number (`source`) and name (`source_name`), and the creation time. Earlier records without `source_name` can return only to a workspace that still has its numbered name and is not another task; otherwise the same fallback rule applies.
 - **Lock:** `$XDG_RUNTIME_DIR/taskspaces.lock` stops two actions from running at once. A second action exits without a message.
 - **Messages:** notifications use `omarchy-notification-send`, or `notify-send` if that is missing. They have the title `taskspaces`. With neither command, messages go to stderr.
-- **Nothing else:** Taskspaces writes no config files and makes no network calls. It runs `hyprctl`, `jq`, `python3`, `flock`, and Omarchy's menu commands, plus a notification command.
+- **Setup files:** only consented setup writes the Lua bindings file, its temporary replacement and state-directory backups. Taskspaces makes no network calls. It runs `hyprctl`, `jq`, `python3`, `flock`, and Omarchy's menu commands, plus a notification command.
 - **Lifetime:** `XDG_RUNTIME_DIR` is per session, so records do not survive a reboot. This is the usual behavior of `XDG_RUNTIME_DIR`, not something Taskspaces tests.
 
 ## Bar widget

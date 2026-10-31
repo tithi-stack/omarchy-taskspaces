@@ -393,10 +393,404 @@ PY
     notify "Not finished: $(jq -r '[.[0:3][] | "\"" + ((.title // .class) | gsub("[\\r\\n\\t]"; " ")) + "\""] | join(", ")' <<< "$remaining") still open"
   fi
 }
+# Setup is separate from task state: it needs no runtime directory or jq.
+setup_task() {
+  command -v python3 >/dev/null || { notify 'Setup needs python3; install it and try again.'; return 1; }
+  # Preserve terminal input on fd 3 while Python reads its program from stdin.
+  python3 -I - "${BASH_SOURCE[0]}" "$@" 3<&0 <<'PY'
+import collections
+import datetime
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import unicodedata
+
+START = '-- >>> taskspaces (added by `taskspaces setup`; undo with `taskspaces setup --remove`) >>>'
+END = '-- <<< taskspaces <<<'
+MODS = {'SUPER': 64, 'CTRL': 4, 'ALT': 8, 'SHIFT': 1}
+ORDER = ('SUPER', 'CTRL', 'SHIFT', 'ALT')
+DESCRIPTIONS = {'send': 'Send window to task', 'silent': 'Send window to task (stay here)',
+                'finish': 'Finish task'}
+COMMANDS = {'send': 'send', 'silent': 'send --silent', 'finish': 'finish'}
+CANDIDATES = {'send': ('SUPER + SHIFT + N', 'SUPER + CTRL + N', 'SUPER + T'),
+              'finish': ('SUPER + SHIFT + D', 'SUPER + CTRL + D', 'SUPER + E')}
+
+class SetupError(Exception):
+    pass
+
+
+def clean(text, limit=100):
+    text = str(text).replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+    text = ''.join(c for c in text if not unicodedata.category(c).startswith('C')
+                   and c not in '"`\\')
+    return ' '.join(text.split())[:limit]
+
+
+def message(text):
+    print('taskspaces: ' + text, file=sys.stderr)
+    tool = shutil.which('omarchy-notification-send') or shutil.which('notify-send')
+    if tool:
+        args = [tool, 'taskspaces', text]
+        if Path(tool).name == 'omarchy-notification-send':
+            args[1:1] = ['-g', '󰌨']
+        try:
+            subprocess.run(args, capture_output=True, timeout=10, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
+def run(*args):
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, timeout=15, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise SetupError('Cannot reach Hyprland; run setup from your desktop session.') from error
+    if result.returncode:
+        raise SetupError('Hyprland could not complete ' + args[1] + '; nothing was accepted.')
+    return result.stdout
+
+
+def parse_key(text):
+    parts = [part.strip().upper() for part in text.split('+')]
+    if len(parts) < 2 or len(set(parts)) != len(parts):
+        raise ValueError('Include modifiers and one key, such as SUPER + SHIFT + D.')
+    key = parts[-1]
+    if any(part not in MODS for part in parts[:-1]):
+        raise ValueError('Use SUPER, CTRL, ALT or SHIFT before the key.')
+    if not re.fullmatch(r'[A-Z0-9]|F(?:[1-9]|[12][0-9]|3[0-5])|RETURN|SPACE|TAB|ESCAPE|'
+                        r'LEFT|RIGHT|UP|DOWN|HOME|END|PAGE_UP|PAGE_DOWN|INSERT|DELETE|BACKSPACE', key):
+        raise ValueError('Use a letter, number, function key or named navigation key.')
+    return sum(MODS[part] for part in parts[:-1]), key
+
+
+def key_text(key, compact=False):
+    mask, name = key
+    parts = [part for part in ORDER if mask & MODS[part]] + [name]
+    return ('+' if compact else ' + ').join(part.title() if compact and len(part) > 1 else part
+                                           for part in parts)
+
+
+def binds():
+    try:
+        data = json.loads(run('hyprctl', 'binds', '-j'))
+        if not isinstance(data, list) or any(not isinstance(b, dict)
+                or type(b.get('modmask')) is not int or not isinstance(b.get('key'), str)
+                or not isinstance(b.get('dispatcher'), str) or not isinstance(b.get('arg'), str)
+                for b in data):
+            raise ValueError('unexpected shortcut data')
+        return data
+    except (ValueError, TypeError) as error:
+        raise SetupError('Cannot read live shortcuts; check Hyprland and try setup again.') from error
+
+
+def bind_key(bind):
+    return bind['modmask'], bind['key'].upper()
+
+
+def lua_binds(text):
+    # Literal o.bind keys, including calls spread over several lines. Never execute Lua.
+    text = re.sub(r'--\[\[.*?\]\]', lambda m: re.sub(r'[^\n]', ' ', m[0]), text, flags=re.S)
+    text = re.sub(r'(?m)^[ \t]*--[^\n]*', lambda m: ' ' * len(m[0]), text)
+    pattern = r'\bo\.bind(?:_toggle)?\s*\(\s*([\'"])([^\'"\n]+)\1\s*,\s*([\'"])(.*?)\3\s*,\s*([^\n]+)'
+    return list(re.finditer(pattern, text, re.S))
+
+
+def installed_keys(text):
+    aliases = set(re.findall(r'\b([A-Za-z_]\w*)\s*=\s*[^\n]*taskspaces', text))
+    result = []
+    for match in lua_binds(text):
+        command = match[5]
+        own = 'taskspaces' in command or any(re.search(r'\b' + re.escape(a) + r'\b', command)
+                                                    for a in aliases)
+        action = re.search(r'[\'" ](send(?:\s+--silent)?|finish)\s*[\'"]', command)
+        if own and action:
+            result.append((match[2], action[1], text[:match.start()].count('\n') + 1))
+    return result
+
+
+def managed_span(text):
+    lines = text.splitlines(keepends=True)
+    starts = [i for i, line in enumerate(lines) if line.rstrip('\r\n') == START]
+    ends = [i for i, line in enumerate(lines) if line.rstrip('\r\n') == END]
+    if not starts and not ends:
+        return None
+    if len(starts) != 1 or len(ends) != 1 or starts[0] >= ends[0]:
+        raise SetupError('The taskspaces block has damaged markers; check your bindings file first.')
+    return sum(map(len, lines[:starts[0]])), sum(map(len, lines[:ends[0] + 1]))
+
+
+def stock_keys():
+    used = {}
+    folder = Path(os.environ.get('TASKSPACES_STOCK_BINDINGS_DIR', '/usr/share/omarchy/default/hypr/bindings'))
+    if not folder.is_dir():
+        raise SetupError('Cannot read Omarchy default shortcuts; check your Omarchy installation and retry.')
+    for file in sorted(folder.glob('*.lua')):
+        for match in lua_binds(file.read_text()):
+            try:
+                used[parse_key(match[2])] = clean(match[4], 45) or 'Omarchy shortcut'
+            except ValueError:
+                continue
+    return used
+
+
+def menu(title, rows):
+    result = subprocess.run(['omarchy-menu-select', title, *rows, '--', '--width', '600'],
+                            capture_output=True, text=True, check=False)
+    return result.stdout.rstrip('\n').split('\t')[0] if result.returncode == 0 else ''
+
+
+def choose_key(wanted, action, selected, stock):
+    def occupied():
+        used = dict(stock)
+        for bind in binds():
+            used[bind_key(bind)] = clean(bind.get('description') or
+                                        (bind['dispatcher'] + ' ' + bind['arg']), 45)
+        used.update({key: 'another Taskspaces shortcut' for key in selected.values()})
+        return used
+    used = occupied()
+    if wanted not in used:
+        return wanted
+    if not shutil.which('omarchy-menu-select'):
+        message(key_text(wanted, True) + ' is already used; skipped. Taskspaces still works from the command line.')
+        return None
+    candidates = CANDIDATES.get(action, ())
+    if action == 'silent':
+        candidates = [key_text((key[0] | MODS['ALT'], key[1]))
+                      for key in map(parse_key, CANDIDATES['send']) if not key[0] & MODS['ALT']]
+    alternative = next((parse_key(key) for key in candidates if parse_key(key) not in used), None)
+    title = key_text(wanted, True) + ' is already used by "' + used[wanted] + '"'
+    rows = []
+    label = 'Use ' + key_text(alternative, True) + ' instead' if alternative else ''
+    if alternative:
+        rows.append('󰐗\t' + label + '\tfree')
+    rows += ['󰏫\tPick my own key…', '󰁍\tSkip this shortcut']
+    selection = menu(title, rows)
+    if label and selection == label:
+        if alternative not in occupied():
+            return alternative
+        raise SetupError('That shortcut was just taken; run setup again to choose another.')
+    if selection == 'Pick my own key…':
+        if not shutil.which('omarchy-menu-input'):
+            raise SetupError('Choosing a key needs omarchy-menu-input; install it and try again.')
+        for _ in range(3):
+            result = subprocess.run(['omarchy-menu-input', 'Shortcut, for example SUPER + SHIFT + D'],
+                                    capture_output=True, text=True, check=False)
+            if result.returncode or not result.stdout.strip():
+                break
+            try:
+                key = parse_key(result.stdout.strip())
+                if key in occupied():
+                    raise ValueError(key_text(key, True) + ' is already used; choose a free shortcut.')
+                return key
+            except ValueError as error:
+                message(str(error))
+    message('Skipped ' + action + '. Taskspaces still works from the command line.')
+    return None
+
+
+def consent(selected, block, remove):
+    keys = ', '.join(key_text(key, True) + ' ' + action for action, key in selected.items())
+    title = 'Remove Taskspaces shortcuts?' if remove else 'Add Taskspaces shortcuts?'
+    if shutil.which('omarchy-menu-select'):
+        yes = 'Yes, remove them' if remove else 'Yes, add them'
+        no = 'No, keep my shortcuts\tleave my bindings file unchanged' if remove else \
+             "No, I'll add them myself\tthe README shows how"
+        while True:
+            choice = menu(title, ['󰐗\t' + yes + '\tyour bindings file is backed up first · ' + keys,
+                                  '󰁮\tShow me the lines first\t' + keys,
+                                  '󰁍\t' + no])
+            if choice == 'Show me the lines first':
+                print(block, end='', flush=True)
+            else:
+                return choice == yes
+    if os.isatty(3):
+        print(title + ' ' + keys, flush=True)
+        print(block, end='', flush=True)
+        with os.fdopen(os.dup(3)) as terminal:
+            print('Back up your bindings first, then proceed? [y/N] ', end='', flush=True)
+            return terminal.readline().strip().lower() in ('y', 'yes')
+    raise SetupError('Setup needs the Omarchy menu or a terminal for consent; nothing changed.')
+
+
+def atomic_write(target, data, mode):
+    pending = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=target.parent, prefix='.taskspaces-', delete=False) as out:
+            pending = Path(out.name)
+            os.fchmod(out.fileno(), stat.S_IMODE(mode))
+            out.write(data)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(pending, target)
+    finally:
+        if pending is not None:
+            pending.unlink(missing_ok=True)
+
+
+def config_errors():
+    return collections.Counter(line.strip() for line in run('hyprctl', 'configerrors').splitlines()
+                               if line.strip())
+
+
+def is_helper(bind, helper, action):
+    try:
+        return bind['dispatcher'] == 'exec' and shlex.split(bind['arg']) == [str(helper), *action.split()]
+    except ValueError:
+        return False
+
+
+def setup():
+    remove, dry = sys.argv[2:] == ['--remove'], sys.argv[2:] == ['--dry-run']
+    helper = Path(sys.argv[1]).resolve()
+    bindings_file = Path(os.environ.get('TASKSPACES_BINDINGS_FILE') or
+                         str(Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') /
+                             'hypr/bindings.lua'))
+    target = bindings_file.resolve()
+    if not target.is_file():
+        raise SetupError('Bindings file is missing: ' + clean(bindings_file) + '; create it before running setup.')
+    with target.open('rb') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise SetupError('Another setup is open; finish it before trying again.') from error
+        original = lock.read()
+        text = original.decode('utf-8')
+        span = managed_span(text)
+        existing = installed_keys(text)
+        if not remove and (span or existing):
+            keys = ', '.join(clean(key) + ' ' + action for key, action, _ in existing)
+            message('Already set up: ' + (keys or 'see the taskspaces block in your bindings file') + '.')
+            return
+        if remove and not span:
+            if existing:
+                message('Nothing to remove automatically; delete the hand-added taskspaces bindings on lines ' +
+                        ', '.join(str(line) for _, _, line in existing) + ' and their helper variable yourself.')
+            else:
+                message('Nothing to remove.')
+            return
+        original_stat = os.fstat(lock.fileno())
+        mode = original_stat.st_mode
+        if not mode & 0o222 or not os.access(target, os.W_OK) or not os.access(target.parent, os.W_OK):
+            raise SetupError('Bindings file is not writable: ' + clean(bindings_file) + '; make it writable and retry.')
+        if not shutil.which('hyprctl'):
+            raise SetupError('Cannot read live shortcuts: hyprctl is missing; run setup in your desktop session.')
+        live = binds()
+        selected = {}
+        if remove:
+            block = text[span[0]:span[1]]
+            for raw_key, action, _ in installed_keys(block):
+                try:
+                    selected['silent' if action == 'send --silent' else action] = parse_key(raw_key)
+                except ValueError:
+                    raise SetupError('A managed shortcut was edited into an unreadable key; check its block first.') from None
+            updated = (text[:span[0]] + text[span[1]:]).encode('utf-8')
+        else:
+            stock = stock_keys()
+            for action in ('send', 'silent', 'finish'):
+                if action == 'silent':
+                    if 'send' not in selected:
+                        continue
+                    send = selected['send']
+                    wanted = (send[0] | MODS['ALT'], send[1])
+                else:
+                    wanted = parse_key('SUPER + ' + ('N' if action == 'send' else 'D'))
+                key = choose_key(wanted, action, selected, stock)
+                if key:
+                    selected[action] = key
+            if not selected:
+                message('No shortcuts selected. Taskspaces still works from the command line.')
+                return
+            lines = [START, 'local taskspaces_bin = ' + json.dumps(shlex.quote(str(helper)), ensure_ascii=False)]
+            for action, key in selected.items():
+                lines.append('o.bind(' + json.dumps(key_text(key)) + ', ' + json.dumps(DESCRIPTIONS[action]) +
+                             ', taskspaces_bin .. " ' + COMMANDS[action] + '")')
+            block = '\n'.join(lines + [END, ''])
+            updated = original + (b'\n' if original and not original.endswith(b'\n') else b'') + block.encode('utf-8')
+        if not consent(selected, block, remove):
+            message('No changes made; your shortcuts are still in place.' if remove else
+                    'No changes made; the README shows how to add shortcuts yourself.')
+            return
+        if dry:
+            print(block, end='')
+            return
+        # Menus may stay open: do not overwrite edits or keys made meanwhile.
+        if (bindings_file.resolve() != target or target.read_bytes() != original
+                or target.stat().st_ino != original_stat.st_ino
+                or target.stat().st_mode != mode):
+            raise SetupError('Your bindings file changed while setup was open; run setup again.')
+        live = binds()
+        if not remove and any(bind_key(bind) in selected.values() for bind in live):
+            raise SetupError('A selected shortcut was just taken; run setup again to choose another.')
+        before_errors = config_errors()
+        backup_dir = Path(os.environ.get('XDG_STATE_HOME') or Path.home() / '.local/state') / 'taskspaces/backups'
+        backup_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
+        backup = backup_dir / ('bindings.lua.' + stamp)
+        with backup.open('xb') as out:
+            os.fchmod(out.fileno(), stat.S_IMODE(mode))
+            out.write(original)
+            out.flush()
+            os.fsync(out.fileno())
+        atomic_write(target, updated, mode)
+        try:
+            if run('hyprctl', 'reload').strip() != 'ok':
+                raise SetupError('Hyprland did not reload the shortcuts.')
+            if config_errors() - before_errors:
+                raise SetupError('Hyprland reported new configuration errors.')
+            live = binds()
+            if remove:
+                for raw_key, action, _ in installed_keys(block):
+                    key = parse_key(raw_key)
+                    if any(bind_key(bind) == key and is_helper(bind, helper, action) for bind in live):
+                        raise SetupError('Hyprland still shows a removed Taskspaces shortcut.')
+            elif any(not any(bind_key(bind) == key and is_helper(bind, helper, COMMANDS[action])
+                             for bind in live) for action, key in selected.items()):
+                raise SetupError('Hyprland did not load every selected Taskspaces shortcut.')
+        except SetupError as error:
+            if bindings_file.resolve() != target or target.read_bytes() != updated:
+                raise SetupError(str(error) + ' Your file changed again; restore the backup yourself: ' + str(backup)) from error
+            try:
+                atomic_write(target, backup.read_bytes(), mode)
+            except OSError as restore_error:
+                raise SetupError(str(error) + ' Restore the backup yourself: ' + str(backup)) from restore_error
+            try:
+                if run('hyprctl', 'reload').strip() != 'ok':
+                    raise SetupError('reload failed')
+            except SetupError:
+                raise SetupError(str(error) + ' Your file was restored; reload Hyprland yourself. Backup: ' + str(backup)) from error
+            raise SetupError(str(error) + ' Your bindings were restored and reloaded.') from error
+        if remove:
+            message('Taskspaces shortcuts removed. Backup: ' + str(backup))
+        else:
+            parts = []
+            if 'send' in selected:
+                parts.append(key_text(selected['send'], True) + ' sends a window to a task')
+            if 'finish' in selected:
+                parts.append(key_text(selected['finish'], True) + ' finishes it')
+            if 'silent' in selected:
+                parts.append(key_text(selected['silent'], True) + ' sends without following')
+            message('Ready: ' + ', '.join(parts) + '.')
+
+try:
+    setup()
+except (SetupError, OSError, UnicodeError) as error:
+    message(clean(str(error), 500))
+    sys.exit(1)
+PY
+}
+
 usage() {
   printf '%s\n' \
     'Usage: taskspaces send [--silent] [--address 0x…] [--dry-run]' \
     '       taskspaces finish [--dry-run]' \
+    '       taskspaces setup [--remove | --dry-run]' \
     '       taskspaces --help | --version'
 }
 show_help() {
@@ -407,11 +801,21 @@ show_help() {
     'send --silent    Move the window without switching to its workspace.' \
     'send --address   Act on the window at this address instead of the focused one.' \
     'finish           Close or return the windows of the current task.' \
+    'setup            Offer shortcuts and ask before changing your bindings.' \
+    'setup --remove   Back up and remove only shortcuts added by setup.' \
+    'setup --dry-run  Ask as usual, then print the block without writing or reloading.' \
     '--dry-run        Print the Hyprland commands instead of running them. Changes no state.' \
     '--version        Print the version.'
 }
 main() {
   local command='' requested_address='' dry=false follow=true workspaces tasks state_dir
+  if [[ ${1:-} == setup ]]; then
+    shift
+    case $#:${1:-} in
+      0:|1:--remove|1:--dry-run) setup_task "$@"; return $? ;;
+      *) usage >&2; return 2 ;;
+    esac
+  fi
   while (( $# )); do
     case $1 in
       send|finish) [[ -z $command ]] || return 2; command=$1 ;;

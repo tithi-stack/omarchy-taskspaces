@@ -20,11 +20,11 @@ Unrelated tasks pile up in one set of workspaces, and an urgent task interrupts 
 
 ## What it does
 
-- **Send:** `SUPER + N` moves the focused window to a named task workspace. The name is suggested from the window title.
-- **Send silently:** `SUPER + ALT + N` does the same, but you stay on your current workspace.
-- **Finish:** `SUPER + D` asks whether to close or keep the task's windows. The keep option shows where the windows will go and confirms that nothing is closed. The bar widget shows the task name.
+- **Send:** your send key (`Super+N` by default) moves the focused window to a named task workspace. The name is suggested from the window title.
+- **Send silently:** your silent send key (`Super+Alt+N` by default) does the same, but you stay on your current workspace.
+- **Finish:** your finish key (`Super+D` by default) asks whether to close or keep the task's windows. The keep option shows where the windows will go and confirms that nothing is closed. The bar widget shows the task name.
 
-The keys are suggestions. You choose them in [Bindings](#bindings).
+Setup suggests these defaults and lets you choose free keys. See [Bindings](#bindings).
 
 ## How it differs
 
@@ -49,7 +49,7 @@ Taskspaces has no daemon and no overlay. It is one helper script and one bar wid
 
 Check your Omarchy version with `cat /usr/share/omarchy/version`.
 
-The helper also needs the `XDG_RUNTIME_DIR` variable set. See [Troubleshooting](#troubleshooting).
+Send and finish also need the `XDG_RUNTIME_DIR` variable set. Setup does not. See [Troubleshooting](#troubleshooting).
 
 ## Install
 
@@ -61,25 +61,33 @@ The helper also needs the `XDG_RUNTIME_DIR` variable set. See [Troubleshooting](
    ```bash
    omarchy plugin enable tithi-stack.taskspaces
    ```
-3. Optional: place the widget in a bar section. It starts in its default section, which is the center unless its manifest sets another. To move it:
+3. Set up your shortcuts. Run this one line, then choose **Yes, add them** to allow the change:
+   ```bash
+   "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/tithi-stack.taskspaces/bin/taskspaces" setup
+   ```
+   Setup backs up your bindings first, checks the reload, and restores the backup if verification fails. It reports the keys you chose. **Show me the lines first** previews the exact block; **No, I'll add them myself** leaves your file alone.
+4. Optional: move the widget to the center of your bar:
    ```bash
    omarchy bar move tithi-stack.taskspaces --section center
    ```
-4. Paste the bindings from [Bindings](#bindings) into `~/.config/hypr/bindings.lua`. Taskspaces never edits this file.
-5. Reload Hyprland, then check for config errors. Fix any errors before you test.
+5. Optional: put the helper on your `PATH`, if `~/.local/bin` is on it:
    ```bash
-   hyprctl reload && hyprctl configerrors
+   ln -s "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/tithi-stack.taskspaces/bin/taskspaces" ~/.local/bin/taskspaces
    ```
-6. Optional: put the helper on your `PATH`, if `~/.local/bin` is on it.
-   ```bash
-   ln -s ~/.config/omarchy/plugins/tithi-stack.taskspaces/bin/taskspaces ~/.local/bin/taskspaces
-   ```
+
+The plugin never touches your Hyprland files unless you run `taskspaces setup` and choose Yes. Installing or enabling it does not run setup.
+
+If a shortcut is already taken, setup names what uses it and offers a free alternative. You can also pick your own key or skip that shortcut. Silent send starts with your chosen send key plus Alt; if that is taken, you can choose another. Existing shortcuts are never replaced.
 
 Updates: `omarchy plugin update tithi-stack.taskspaces`. The bindings point at the helper inside the plugin folder, so you do not change them after an update.
 
 ## Bindings
 
-Paste these into `~/.config/hypr/bindings.lua`:
+Setup is the primary path. After the optional PATH link, run `taskspaces setup` to check whether shortcuts are already installed. `taskspaces setup --dry-run` asks the same questions and prints the block after Yes, without writing or reloading.
+
+### Manual alternative
+
+Paste these suggested defaults into `${XDG_CONFIG_HOME:-$HOME/.config}/hypr/bindings.lua` only after checking that the keys are free. Adjust the helper path if you use a custom `XDG_CONFIG_HOME`:
 
 ```lua
 -- taskspaces: send the focused window to a task, or finish the task
@@ -89,9 +97,9 @@ o.bind("SUPER + ALT + N", "Send window to task (stay here)", taskspaces_bin .. "
 o.bind("SUPER + D", "Finish task", taskspaces_bin .. " finish")
 ```
 
-The keys are suggestions. If you have already remapped `SUPER + N`, `SUPER + ALT + N`, or `SUPER + D`, change the keys in the snippet to free ones.
+These are suggested defaults. Use the actual keys you chose in setup or in your manual bindings. After manual changes, run `hyprctl reload` and `hyprctl configerrors`.
 
-| Keys | Action | Command |
+| Suggested default | Action | Command |
 |---|---|---|
 | `SUPER + N` | Send the focused window to a task, then follow it | `taskspaces send` |
 | `SUPER + ALT + N` | Send the focused window to a task, and stay here | `taskspaces send --silent` |
@@ -101,25 +109,19 @@ The keys are suggestions. If you have already remapped `SUPER + N`, `SUPER + ALT
 
 ### Conflict check
 
-- The default bindings in `/usr/share/omarchy/default/hypr/bindings/*.lua` on Omarchy 4.0.0.alpha do **not** use `SUPER + N`, `SUPER + ALT + N`, or `SUPER + D`. This was checked against those files. Omarchy Quattro was not checked.
-- To check your own setup, run this before you paste the bindings:
-  ```bash
-  hyprctl -j binds | jq -r '.[] | select(.key == "N" or .key == "D") | "\(.modmask) \(.key) \(.dispatcher)"'
-  ```
-  Modmask `64` means `SUPER`, and `72` means `SUPER + ALT`. A line with `64` or `72` for `N` or `D` means that key is already bound. Find the other bind in `~/.config/hypr/bindings.lua` before you add taskspaces's line.
-- To rebind a taken key, call `hl.unbind("SUPER + N")` before the matching `o.bind(...)` line, and note what the key did before.
+Setup compares modifier masks and keys with `hyprctl binds -j` and checks Omarchy's stock Lua bindings before suggesting an alternative. If it cannot read live shortcuts, it stops without writing. For manual setup, inspect `hyprctl binds -j` yourself and choose free keys; do not remove someone else's shortcut to make room.
 
 ## Usage
 
 1. Focus the window you want to move. For example, an email window titled `Reply to the team - Mail`.
-2. Press `SUPER + N`. A menu opens.
+2. Press your send key (`Super+N` by default). A menu opens.
 3. The first row, **Start task "Reply to the team"**, uses the suggested name. Its grey line says `name suggested from the window title` (with ` · whole window (all tabs)` added for Chrome). Press Enter to accept it, or choose **Start task with my own name…** to enter your own.
 4. The window moves to a new workspace named after the task, and you follow it. A notification says `Task "Reply to the team" → workspace N`.
 5. Work in the task. The bar shows the task icon followed by `Reply to the team`.
-6. Press `SUPER + D` to finish. With one window, choose **Close 1 window and finish**, **Keep 1 window and finish**, or **Cancel**. With more windows, the rows show the count and use `windows`. The keep row says `returns to workspace S · nothing is closed` in grey, or `stays in workspace S · nothing is closed` for a task made from a numbered workspace. `S` is the workspace number.
+6. Press your finish key (`Super+D` by default) to finish. With one window, choose **Close 1 window and finish**, **Keep 1 window and finish**, or **Cancel**. With more windows, the rows show the count and use `windows`. The keep row says `returns to workspace S · nothing is closed` in grey, or `stays in workspace S · nothing is closed` for a task made from a numbered workspace. `S` is the workspace number.
 7. Choose one. If you choose Close and an app keeps its window open, for example to ask you to save, the task stays unfinished. Taskspaces waits up to 30 seconds. It stops early after 10 seconds with no windows closing if no new window has appeared, then names up to three windows still open. Windows closed or opened while the menu was open are checked again before the choice runs.
 
-To send without following, press `SUPER + ALT + N` in step 2. The full menu rows and naming rules are in [How Taskspaces works](docs/how-it-works.md).
+To send without following, press your silent send key (`Super+Alt+N` by default) in step 2. The full menu rows and naming rules are in [How Taskspaces works](docs/how-it-works.md).
 
 On a numbered workspace, **Turn workspace S into a task…** names the current workspace without moving its windows. Its grey line says `windows stay where they are`. Suggested names are capped at 35 characters so the first row always reads `Start task "<name>"`. Names you type are capped at 40 characters. Quotes and backslashes are removed from task names; names taken from an app are cleaned too. A name made only of digits gets `Task ` in front, for example `Task 2`.
 
@@ -129,8 +131,12 @@ For a task started by moving a window, kept windows return to its starting works
 
 ## Uninstall
 
-1. Delete the `taskspaces_bin` line and the three `o.bind` lines from `~/.config/hypr/bindings.lua`. Then run `hyprctl reload`.
-2. If you made the optional symlink in step 6, remove it: `rm ~/.local/bin/taskspaces`.
+1. Remove setup's shortcuts before deleting the plugin:
+   ```bash
+   "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/tithi-stack.taskspaces/bin/taskspaces" setup --remove
+   ```
+   Choose **Yes, remove them**. Only the managed block is removed, after a backup. If you pasted the manual snippet, setup tells you which binding lines to delete yourself; also delete its `taskspaces_bin` line, then run `hyprctl reload`.
+2. If you made the optional PATH symlink, remove it: `rm ~/.local/bin/taskspaces`.
 3. Remove the plugin. This disables it, then deletes its folder:
    ```bash
    omarchy plugin remove tithi-stack.taskspaces
@@ -143,8 +149,8 @@ For a task started by moving a window, kept windows return to its starting works
 ## Troubleshooting
 
 - **The key does nothing.** Cause: another Taskspaces action holds the lock, and the helper exits silently when it cannot get it. Or the bind did not load. Fix: wait a second and press again. If it still does nothing, run `hyprctl configerrors`.
-- **Notification: "No window focused".** Cause: no window had focus when you pressed `SUPER + N`. Fix: focus a window and press it again.
-- **Notification: "This workspace isn't a task".** Cause: `SUPER + D` ran on a plain workspace. Fix: switch to the task workspace, then press `SUPER + D`.
+- **Notification: "No window focused".** Cause: no window had focus when you pressed your send key. Fix: focus a window and press it again.
+- **Notification: "This workspace isn't a task".** Cause: your finish key ran on a plain workspace. Fix: switch to the task workspace, then press your finish key (`Super+D` by default).
 - **Notification: "Dispatch failed: <reason>".** Cause: Hyprland rejected a command, or did not reply ("no reply from Hyprland"). Fix: run `hyprctl version`. If that fails, Hyprland is not reachable from this shell. If it works, the reason after the colon is Hyprland's reply to the rejected command.
 - **Notification: "Missing required command: <names>".** Cause: the listed commands are not on `PATH`. Fix: install them, then check each with `command -v <name>`.
 - **No notification appears, and nothing happens.** Cause: neither `omarchy-notification-send` nor `notify-send` is installed, so messages go to stderr, which a keybinding does not show. Fix: run the same command from a terminal to see the message.
@@ -152,7 +158,7 @@ For a task started by moving a window, kept windows return to its starting works
 
 ## FAQ
 
-- **Does it change my Hyprland config?** No. You paste the bindings yourself. The plugin ships a helper script and a bar widget.
+- **Does it change my Hyprland config?** Only when you run setup and choose Yes. It edits only your Lua bindings file, backs it up outside your config folder, and can undo its managed block with `taskspaces setup --remove`.
 - **Does it use the network or sudo?** No. It runs only local commands. See [SECURITY.md](SECURITY.md).
 - **Can I keep using numbered workspaces?** Yes. A task takes the lowest unused number while it exists. See [Workspace numbers](docs/how-it-works.md#workspace-numbers).
 - **Does it work with a legacy `.conf` Hyprland config?** Unverified. Only the Lua form is documented.
