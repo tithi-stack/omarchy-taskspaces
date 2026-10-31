@@ -33,6 +33,8 @@ Parts of this exist in other projects. Some tools give you places to organize wi
 - **[jsimonrichard/hypr-taskspace](https://github.com/jsimonrichard/hypr-taskspace)** is a heavier task manager. Each task gets its own named workspaces. It can use git worktrees for linked repos, runs a systemd user daemon (`tskd`), and opens a control overlay on `SUPER + Tab`. Choose it if you want that model.
 - **[tornikegomareli/omarchy-spaces](https://github.com/tornikegomareli/omarchy-spaces)** is a different tool: a bar workspace switcher that shows the apps open on each workspace. Its README describes switching and previews, not sending windows to tasks.
 
+omarchy-taskspaces is not affiliated with hypr-taskspace or omarchy-spaces; the similar names are a coincidence.
+
 Taskspaces has no daemon and no overlay. It is one helper script and one bar widget. Both project descriptions were checked on 2026-10-30.
 
 ## Requirements
