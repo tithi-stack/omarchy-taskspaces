@@ -1,5 +1,5 @@
 #!/bin/bash
-# taskhop: send the focused window to a named task workspace, or finish a task.
+# taskspaces: send the focused window to a named task workspace, or finish a task.
 # Needs Hyprland, jq, python3, flock and Omarchy's menu helpers at runtime.
 set -euo pipefail
 
@@ -55,11 +55,11 @@ lua_string() {
 notify() {
   if $dry; then printf 'Notification: %s\n' "$*"; else
     if command -v omarchy-notification-send >/dev/null; then
-      omarchy-notification-send -g '◆' 'taskhop' "$*" >/dev/null || true
+      omarchy-notification-send -g '◆' 'taskspaces' "$*" >/dev/null || true
     elif command -v notify-send >/dev/null; then
-      notify-send 'taskhop' "$*" || true
+      notify-send 'taskspaces' "$*" || true
     else
-      printf 'taskhop: %s\n' "$*" >&2
+      printf 'taskspaces: %s\n' "$*" >&2
     fi
   fi
 }
@@ -339,9 +339,9 @@ PY
 }
 usage() {
   printf '%s\n' \
-    'Usage: taskhop send [--silent] [--address 0x…] [--dry-run]' \
-    '       taskhop finish [--dry-run]' \
-    '       taskhop --help | --version'
+    'Usage: taskspaces send [--silent] [--address 0x…] [--dry-run]' \
+    '       taskspaces finish [--dry-run]' \
+    '       taskspaces --help | --version'
 }
 show_help() {
   usage
@@ -370,11 +370,11 @@ main() {
   done
   [[ -n $command ]] || { printf 'Expected send or finish\n' >&2; return 2; }
   require_commands || return 1
-  state_dir=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is required}/taskhop
+  state_dir=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is required}/taskspaces
   # Dry runs create no state, lock file, menus, notifications, or dispatches.
   if ! $dry; then
     umask 077
-    exec 9>"$XDG_RUNTIME_DIR/taskhop.lock"
+    exec 9>"$XDG_RUNTIME_DIR/taskspaces.lock"
     flock -n 9 || return 0
     mkdir -p "$state_dir"
     chmod 700 "$state_dir"
