@@ -14,7 +14,11 @@ labels = {'google-chrome': 'Chrome', 'libreoffice-calc': 'Calc',
           'libreoffice-writer': 'Writer', 'org.gnome.Nautilus': 'Files',
           'com.mitchellh.ghostty': 'Terminal', 'Alacritty': 'Terminal',
           'kitty': 'Terminal', 'code': 'VS Code'}
-label = labels.get(cls, cls.rsplit('.', 1)[-1].capitalize() or 'App')
+def clean(text):
+    text = ''.join(c for c in text if c not in '"\\[]{}<>$`' and not unicodedata.category(c).startswith('C'))
+    return ' '.join(text.split())
+
+label = clean(labels.get(cls, cls.rsplit('.', 1)[-1].capitalize())) or 'App'
 if mode == 'label':
     print(label)
     sys.exit()
@@ -32,15 +36,19 @@ if mode == 'suggest':
         text = text[1:]
     if cls.startswith('libreoffice-'):
         text = re.sub(r'\.[A-Za-z0-9]{1,8}$', '', text)
-text = ''.join(c for c in text if c not in '"\\[]{}<>$`' and not unicodedata.category(c).startswith('C'))
-text = ' '.join(text.split())
-if len(text) > 40:
-    prefix = text[:39]
-    if not text[39].isspace() and ' ' in prefix:
+text = clean(text)
+if mode == 'suggest' and (not text or re.fullmatch(r'New Tab|Untitled.*|Loading.*', text, re.I) or text.casefold() in {label.casefold(), clean(cls).casefold(), 'google chrome', 'chromium', 'libreoffice ' + label.casefold()}):
+    text = label + ' task'
+# Fallback app labels follow the same rules as names from titles or input.
+text = clean(text)
+if re.fullmatch(r'\d+', text):
+    text = 'Task ' + text
+limit = 35 if mode == 'suggest' else 40
+if len(text) > limit:
+    prefix = text[:limit - 1]
+    if not text[limit - 1].isspace() and ' ' in prefix:
         prefix = prefix.rsplit(' ', 1)[0]
     text = prefix.rstrip() + '…'
-if mode == 'suggest' and (not text or re.fullmatch(r'New Tab|Untitled.*|Loading.*', text, re.I) or text.casefold() in {label.casefold(), cls.casefold(), 'google chrome', 'chromium', 'libreoffice ' + label.casefold()}):
-    text = label + ' task'
 print(text)
 PY
 }
@@ -75,8 +83,13 @@ require_commands() {
 }
 dispatch() {
   if $dry; then printf 'hyprctl dispatch %q\n' "$1"; else
-    local result
+    local result live missing_address=${2:-}
     if ! result=$(hyprctl dispatch "$1") || [[ $result != ok ]]; then
+      # Finish tolerates a window disappearing between the refresh and dispatch.
+      if [[ -n $missing_address ]] && live=$(hyprctl clients -j) &&
+        jq -e --arg address "$missing_address" 'all(.[]; .address != $address)' <<< "$live" >/dev/null; then
+        return 0
+      fi
       printf 'Dispatcher failed: %s\n%s\n' "$1" "$result" >&2
       notify "Dispatch failed: ${result:-no reply from Hyprland}"
       return 1
@@ -84,7 +97,7 @@ dispatch() {
   fi
 }
 move_window() {
-  dispatch "hl.dsp.window.move({ window = $(lua_string "address:$1"), workspace = $(lua_string "$2"), follow = $3 })"
+  dispatch "hl.dsp.window.move({ window = $(lua_string "address:$1"), workspace = $(lua_string "$2"), follow = $3 })" "${4:-}"
 }
 prune() {
   local file record
@@ -101,9 +114,12 @@ prune() {
   done
 }
 dedupe() {
-  local base=$1 name=$1 suffix=2
-  while jq -e --arg name "$name" 'any(.[]; .name == $name)' <<< "$workspaces" >/dev/null; do
-    name="$base $suffix"
+  local base=$1 name=$1 limit=${2:-0} suffix=2
+  while jq -e --arg name "$name" 'any(.[]; .name == $name
+    or (($name | test("^[0-9]+$")) and .id == ($name | tonumber)))' <<< "$workspaces" >/dev/null; do
+    if (( limit > 0 )); then
+      name="${base:0:limit - ${#suffix} - 1} $suffix"
+    else name="$base $suffix"; fi
     suffix=$((suffix + 1))
   done
   printf '%s\n' "$name"
@@ -149,7 +165,7 @@ make_workspace_task() {
   if ! $dry; then
     pending="$state_dir/$source.json.tmp"
     jq -n --argjson id "$source" --arg name "$name" --argjson created "$(date +%s)" \
-      '{id:$id, name:$name, source:$id, created:$created}' > "$pending"
+      '{id:$id, name:$name, source:$id, source_name:($id | tostring), created:$created}' > "$pending"
   fi
   if ! dispatch "hl.dsp.workspace.rename({ workspace = $(lua_string "$source"), name = $(lua_string "$name") })"; then
     if ! $dry; then rm -- "$pending"; fi
@@ -159,7 +175,7 @@ make_workspace_task() {
   notify "Task \"$name\" → workspace $source"
 }
 send_task() {
-  local window address cls title source suggested selection target name row record plain_workspaces plain_target=false
+  local window address cls title source return_source source_name suggested selection target name row record candidate plain_workspaces plain_target=false
   if [[ -n $requested_address ]]; then
     window=$(hyprctl clients -j | jq -c --arg address "$requested_address" 'first(.[] | select(.address == $address and .mapped != false)) // {}')
   else window=$(hyprctl activewindow -j); fi
@@ -170,29 +186,35 @@ send_task() {
   source=$(jq -er '.workspace.id | select(type == "number")' <<< "$window")
   workspaces=$(hyprctl workspaces -j)
   prune
-  suggested=$(dedupe "$(suggest_name "$cls" "$title")")
+  return_source=$source
+  (( return_source > 0 )) || return_source=1
+  source_name=$(jq -r --argjson id "$return_source" 'first(.[] | select(.id == $id)).name // ($id | tostring)' <<< "$workspaces")
+  suggested=$(dedupe "$(suggest_name "$cls" "$title")" 35)
   local first="Start task \"$suggested\"" typed='Start task with my own name…' rename='Rename this task…'
-  # Keep long names intact while fitting the main label within 50 characters.
-  (( ${#first} <= 50 )) || first="Start \"$suggested\""
   local adopt="Turn workspace $source into a task…" can_adopt=false
-  local -a rows=("$(printf '➕\t%s\tname suggested from the window title' "$first")" "$(printf '➕\t%s' "$typed")")
+  local -a rows=("$(printf '󰐗\t%s\tname suggested from the window title' "$first")" "$(printf '󰏫\t%s' "$typed")")
+  local -A task_rows=() plain_rows=()
   [[ $cls != google-chrome ]] || rows[0]+=' · whole window (all tabs)'
   local source_record
   source_record=$(jq -c --argjson source "$source" 'first(.[] | select(.id == $source)) // empty' <<< "$tasks")
-  [[ -z $source_record ]] || rows+=("$(printf '✎\t%s' "$rename")")
+  [[ -z $source_record ]] || rows+=("$(printf '󰏫\t%s' "$rename")")
   if [[ -z $source_record && ! -e $state_dir/$source.json ]] && jq -e --argjson id "$source" \
     'any(.[]; .id == $id and .id > 0 and .name == ($id | tostring))' <<< "$workspaces" >/dev/null; then
     can_adopt=true
-    rows+=("$(printf '✎\t%s\twindows stay where they are' "$adopt")")
+    rows+=("$(printf '󰉗\t%s\twindows stay where they are' "$adopt")")
   fi
   while IFS= read -r record; do
-    rows+=("$(jq -r '"◆\tSend to: " + .name + "\tws " + (.id | tostring)' <<< "$record")")
+    candidate=$(jq -r .id <<< "$record")
+    task_rows[$candidate]=$(jq -r '"Send to: " + .name + "\tworkspace " + (.id | tostring)' <<< "$record")
+    rows+=("$(printf '󰉒\t%s' "${task_rows[$candidate]}")")
   done < <(jq -c --argjson source "$source" 'sort_by(.id)[] | select(.id != $source)' <<< "$tasks")
   plain_workspaces=$(jq -c --argjson tasks "$tasks" --argjson source "$source" '
     [.[] | select(.id > 0 and .id != $source)
       | select(.id as $id | any($tasks[]; .id == $id) | not)] | sort_by(.id)' <<< "$workspaces")
   while IFS= read -r record; do
-    rows+=("$(jq -r '"↪\tMove to: " + .name + "\tws " + (.id | tostring)' <<< "$record")")
+    candidate=$(jq -r .id <<< "$record")
+    plain_rows[$candidate]=$(jq -r '"Move to: " + .name + "\tworkspace " + (.id | tostring)' <<< "$record")
+    rows+=("$(printf '󰉒\t%s' "${plain_rows[$candidate]}")")
   done < <(jq -c '.[]' <<< "$plain_workspaces")
   if $dry; then selection=$first; else
     selection=$(omarchy-menu-select 'Task' "${rows[@]}" -- --width 600) || return 0
@@ -216,29 +238,31 @@ send_task() {
     fi
     # A workspace may have appeared while the menu was open.
     workspaces=$(hyprctl workspaces -j)
-    name=$(dedupe "$name")
+    if [[ $row == "$first" ]]; then name=$(dedupe "$name" 35); else name=$(dedupe "$name"); fi
     target=$(first_free)
     printf 'Target workspace: %s; name: %s; source: %s; address: %s\n' "$target" "$name" "$source" "$address"
     move_window "$address" "$target" "$follow"
     dispatch "hl.dsp.workspace.rename({ workspace = $(lua_string "$target"), name = $(lua_string "$name") })"
     if ! $dry; then
-      jq -n --argjson id "$target" --arg name "$name" --argjson source "$source" --argjson created "$(date +%s)" \
-        '{id:$id, name:$name, source:$source, created:$created}' > "$state_dir/$target.json"
+      jq -n --argjson id "$target" --arg name "$name" --argjson source "$return_source" --arg source_name "$source_name" --argjson created "$(date +%s)" \
+        '{id:$id, name:$name, source:$source, source_name:$source_name, created:$created}' > "$state_dir/$target.json"
     fi
   else
     # Match the whole returned row; never trust arbitrary menu text as Lua.
     target=''
     while IFS= read -r record; do
-      if [[ $selection == "$(jq -r '"Send to: " + .name + "\tws " + (.id | tostring)' <<< "$record")" ]]; then
-        target=$(jq -r .id <<< "$record")
+      candidate=$(jq -r .id <<< "$record")
+      if [[ $selection == "${task_rows[$candidate]}" ]]; then
+        target=$candidate
         name=$(jq -r .name <<< "$record")
         break
       fi
     done < <(jq -c --argjson source "$source" '.[] | select(.id != $source)' <<< "$tasks")
     if [[ -z $target ]]; then
       while IFS= read -r record; do
-        if [[ $selection == "$(jq -r '"Move to: " + .name + "\tws " + (.id | tostring)' <<< "$record")" ]]; then
-          target=$(jq -r .id <<< "$record")
+        candidate=$(jq -r .id <<< "$record")
+        if [[ $selection == "${plain_rows[$candidate]}" ]]; then
+          target=$candidate
           name=$(jq -r .name <<< "$record")
           plain_target=true
           break
@@ -252,28 +276,46 @@ send_task() {
   fi
   if $plain_target; then notify "Moved to workspace $target"; else notify "Task \"$name\" → workspace $target"; fi
 }
+finish_destination() {
+  if [[ $source == "$id" ]]; then printf '%s\n' "$id"; return; fi
+  local source_name
+  source_name=$(jq -r '.source_name // (.source | tostring)' <<< "$record")
+  if (( source > 0 )) && jq -e --argjson source "$source" --arg name "$source_name" --argjson tasks "$tasks" '
+    any(.[]; .id == $source and .name == $name)
+    and (any($tasks[]; .id == $source) | not)' <<< "$workspaces" >/dev/null; then
+    printf '%s\n' "$source"
+  elif jq -e --argjson tasks "$tasks" '
+    (any(.[]; .id == 1 and .name != "1") | not)
+    and (any($tasks[]; .id == 1) | not)' <<< "$workspaces" >/dev/null; then
+    printf '1\n'
+  else
+    # Even the fallback may belong to another task. Use a free workspace then.
+    first_free
+  fi
+}
 finish_success() {
-  local target
+  local target=${1:-}
   workspaces=$(hyprctl workspaces -j)
   if [[ $source == "$id" ]]; then
     # In-place tasks keep their windows and focus; restore the numbered label.
     if jq -e --argjson id "$id" 'any(.[]; .id == $id)' <<< "$workspaces" >/dev/null; then
       dispatch "hl.dsp.workspace.rename({ workspace = $(lua_string "$id"), name = $(lua_string "$id") })"
     fi
-    if ! $dry; then rm -- "$state_dir/$id.json"; fi
+    if ! $dry; then rm -f -- "$state_dir/$id.json"; fi
     notify "Finished: $name"
     return
   fi
-  target=$(jq -r --argjson source "$source" --argjson id "$id" '
-    if any(.[]; .id == $source and .id != $id) then $source
-    else ([.[] | .id | select(. > 0 and . != $id)] | min // 1) end' <<< "$workspaces")
+  if [[ -z $target ]]; then
+    prune
+    target=$(finish_destination)
+  fi
   # Preserve the record if focusing the return workspace fails.
   dispatch "hl.dsp.focus({ workspace = $(lua_string "$target") })"
-  if ! $dry; then rm -- "$state_dir/$id.json"; fi
+  if ! $dry; then rm -f -- "$state_dir/$id.json"; fi
   notify "Finished: $name"
 }
 finish_task() {
-  local workspace id name source record wins count summary selection address live remaining extra now start changed previous
+  local workspace id name source record destination wins count summary selection address live remaining extra now start changed previous
   workspace=$(hyprctl activeworkspace -j)
   id=$(jq -er '.id | select(type == "number")' <<< "$workspace")
   workspaces=$(hyprctl workspaces -j)
@@ -282,16 +324,18 @@ finish_task() {
   if [[ -z $record ]]; then notify "This workspace isn't a task"; return; fi
   name=$(jq -r .name <<< "$record")
   source=$(jq -r .source <<< "$record")
+  destination=$(finish_destination)
   wins=$(hyprctl clients -j | jq -c --argjson id "$id" '[.[] | select(.workspace.id == $id and .mapped != false) | {address, class, title}]')
   count=$(jq length <<< "$wins")
   if (( count == 0 )); then finish_success; return; fi
   summary=$(python3 -I - "$wins" <<'PY'
-import collections, json, sys
+import collections, json, sys, unicodedata
 labels = {'google-chrome':'Chrome', 'libreoffice-calc':'Calc', 'libreoffice-writer':'Writer', 'org.gnome.Nautilus':'Files', 'com.mitchellh.ghostty':'Terminal', 'Alacritty':'Terminal', 'kitty':'Terminal', 'code':'VS Code'}
 items = []
 for w in json.loads(sys.argv[1]):
     cls = w['class'] or ''
     label = labels.get(cls, cls.rsplit('.', 1)[-1].capitalize() or 'App')
+    label = ''.join(c for c in label if c not in '"\\[]{}<>$`' and not unicodedata.category(c).startswith('C')) or 'App'
     if cls.startswith('libreoffice-'):
         label += ' (' + (w['title'] or '').split(' - LibreOffice', 1)[0].lstrip('* ') + ')'
     items.append(' '.join(label.split()))
@@ -300,24 +344,32 @@ PY
   )
   local windows="$count windows"
   (( count != 1 )) || windows='1 window'
-  local close_row="Close $windows and finish" move_row="Send $windows back to workspace $source and finish"
-  [[ $source != "$id" ]] || move_row="Keep $windows here and finish"
+  local close_row="Close $windows and finish" keep_row="Keep $windows and finish"
+  local keep_note="returns to workspace $destination · nothing is closed"
+  [[ $source != "$id" ]] || keep_note="stays in workspace $id · nothing is closed"
   if $dry; then selection=$close_row; else
-    selection=$(omarchy-menu-select "Finish \"$name\"?" "$(printf '◆\t%s\t%s' "$close_row" "$summary")" "$(printf '↩\t%s\tnothing is closed' "$move_row")" $'\tCancel' -- --width 600) || return 0
+    selection=$(omarchy-menu-select "Finish \"$name\"?" "$(printf '󰖭\t%s\t%s' "$close_row" "$summary")" "$(printf '󰐃\t%s\t%s' "$keep_row" "$keep_note")" $'󰁍\tCancel' -- --width 600) || return 0
   fi
   selection=${selection%%$'\t'*}
-  if [[ $selection == "$move_row" ]]; then
+  [[ $selection == "$keep_row" || $selection == "$close_row" ]] || return 0
+  # The menu can stay open while windows close, open, or change workspace.
+  wins=$(hyprctl clients -j | jq -c --argjson id "$id" '[.[] | select(.workspace.id == $id and .mapped != false) | {address, class, title}]')
+  workspaces=$(hyprctl workspaces -j)
+  prune
+  destination=$(finish_destination)
+  if [[ $selection == "$keep_row" ]]; then
     if [[ $source != "$id" ]]; then
-      while IFS= read -r address; do move_window "$address" "$source" false; done < <(jq -r '.[].address' <<< "$wins")
+      while IFS= read -r address; do move_window "$address" "$destination" false "$address"; done < <(jq -r '.[].address' <<< "$wins")
     fi
-    finish_success
+    finish_success "$destination"
   elif [[ $selection == "$close_row" ]]; then
+    count=$(jq length <<< "$wins")
     while IFS= read -r address; do
       [[ $address =~ ^0x[0-9a-fA-F]+$ ]] || return 1
-      dispatch "hl.dsp.window.close({ window = $(lua_string "address:$address") })"
+      dispatch "hl.dsp.window.close({ window = $(lua_string "address:$address") })" "$address"
     done < <(jq -r '.[].address' <<< "$wins")
     if $dry; then
-      printf 'Would poll recorded addresses every 0.25s (30s cap; 5s stalled without extra dialogs).\n'
+      printf 'Would poll recorded addresses every 0.25s (30s cap; 10s stalled without extra dialogs).\n'
       if [[ $source == "$id" ]]; then
         printf 'Would retain task if any remain; otherwise restore workspace number, remove %s/%s.json and keep focus.\n' "$state_dir" "$id"
       else
@@ -335,7 +387,7 @@ PY
       now=$SECONDS
       if (( count < previous )); then changed=$now; previous=$count; fi
       extra=$(jq --argjson id "$id" --argjson wins "$wins" '[.[] | select(.workspace.id == $id and .mapped != false) | select(.address as $a | any($wins[]; .address == $a) | not)] | length' <<< "$live")
-      if (( now - start >= 30 || (now - changed >= 5 && extra == 0) )); then break; fi
+      if (( now - start >= 30 || (now - changed >= 10 && extra == 0) )); then break; fi
       sleep 0.25
     done
     notify "Not finished: $(jq -r '[.[0:3][] | "\"" + ((.title // .class) | gsub("[\\r\\n\\t]"; " ")) + "\""] | join(", ")' <<< "$remaining") still open"

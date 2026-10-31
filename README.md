@@ -22,7 +22,7 @@ Unrelated tasks pile up in one set of workspaces, and an urgent task interrupts 
 
 - **Send:** `SUPER + N` moves the focused window to a named task workspace. The name is suggested from the window title.
 - **Send silently:** `SUPER + ALT + N` does the same, but you stay on your current workspace.
-- **Finish:** `SUPER + D` asks whether to close the task's windows or send them back without closing them. For a task made from a numbered workspace, you can keep the windows there instead. The bar widget shows the task name.
+- **Finish:** `SUPER + D` asks whether to close or keep the task's windows. The keep option shows where the windows will go and confirms that nothing is closed. The bar widget shows the task name.
 
 The keys are suggestions. You choose them in [Bindings](#bindings).
 
@@ -115,13 +115,17 @@ The keys are suggestions. If you have already remapped `SUPER + N`, `SUPER + ALT
 2. Press `SUPER + N`. A menu opens.
 3. The first row, **Start task "Reply to the team"**, uses the suggested name. Its grey line says `name suggested from the window title` (with ` · whole window (all tabs)` added for Chrome). Press Enter to accept it, or choose **Start task with my own name…** to enter your own.
 4. The window moves to a new workspace named after the task, and you follow it. A notification says `Task "Reply to the team" → workspace N`.
-5. Work in the task. The bar shows `◆ Reply to the team`.
-6. Press `SUPER + D` to finish. With one window, the menu offers **Close 1 window and finish**, **Send 1 window back to workspace S and finish** (or **Keep 1 window here and finish** for a task made from a numbered workspace), or **Cancel**. `S` is the number of the workspace where you started the task. With more windows, the rows show the count and use `windows`. The send-back and keep-here rows say `nothing is closed` in grey.
-7. Choose one. A window that stays open, for example because an app asks you to save, keeps the task. Taskspaces stops waiting after 30 seconds and notifies you, naming up to three windows that are still open.
+5. Work in the task. The bar shows the task icon followed by `Reply to the team`.
+6. Press `SUPER + D` to finish. With one window, choose **Close 1 window and finish**, **Keep 1 window and finish**, or **Cancel**. With more windows, the rows show the count and use `windows`. The keep row says `returns to workspace S · nothing is closed` in grey, or `stays in workspace S · nothing is closed` for a task made from a numbered workspace. `S` is the workspace number.
+7. Choose one. If you choose Close and an app keeps its window open, for example to ask you to save, the task stays unfinished. Taskspaces waits up to 30 seconds. It stops early after 10 seconds with no windows closing if no new window has appeared, then names up to three windows still open. Windows closed or opened while the menu was open are checked again before the choice runs.
 
 To send without following, press `SUPER + ALT + N` in step 2. The full menu rows and naming rules are in [How Taskspaces works](docs/how-it-works.md).
 
-On a numbered workspace, **Turn workspace S into a task…** names the current workspace without moving its windows. Its grey line says `windows stay where they are`. Long suggested names use `Start "<name>"` so the row fits the menu; the task keeps its full name.
+On a numbered workspace, **Turn workspace S into a task…** names the current workspace without moving its windows. Its grey line says `windows stay where they are`. Suggested names are capped at 35 characters so the first row always reads `Start task "<name>"`. Names you type are capped at 40 characters. Quotes and backslashes are removed from task names; names taken from an app are cleaned too. A name made only of digits gets `Task ` in front, for example `Task 2`.
+
+The menu uses these icons: 󰐗 for the suggested name, 󰏫 for typing or renaming, 󰉗 for naming the current workspace, 󰉒 for sending to another workspace, 󰖭 for Close, 󰐃 for Keep, and 󰁍 for Cancel. The menu uses the Nerd Font icons included with Omarchy. Existing-task and workspace choices spell out `workspace <id>` in grey.
+
+For a task started by moving a window, kept windows return to its starting workspace only if it still has the same name and is not another task. Otherwise they go to workspace 1. If workspace 1 is also in use by a task or has a custom name, Taskspaces uses the lowest unused workspace number. Focus follows the windows. Tasks started from a scratchpad also return to workspace 1, subject to that same safety check.
 
 ## Uninstall
 
