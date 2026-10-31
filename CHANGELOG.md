@@ -8,7 +8,7 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
-- README leads with the task workflow and a diagram, groups setup into two steps, and explains the numbered-workspace round trip.
+- README leads with the task workflow and a hero image, groups setup into two steps, and explains the numbered-workspace round trip.
 - Send rows read `Start task "<name>"`, `Start task with my own name…`, and `Turn workspace S into a task…`. Grey descriptions explain the suggested name, Chrome's whole-window scope, and windows staying in place. `Send to:` and `Move to:` spell out `workspace <id>` in grey.
 - Finish uses `Close 1 window and finish` / `Close N windows and finish` and `Keep 1 window and finish` / `Keep N windows and finish`. Keep shows `returns to workspace S · nothing is closed`, or `stays in workspace S · nothing is closed` for a task made from a numbered workspace.
 - Menu icons use Omarchy's Nerd Font: 󰐗 suggested name, 󰏫 type or rename, 󰉗 name the current workspace, 󰉒 send or move, 󰖭 close, 󰐃 keep, and 󰁍 cancel.

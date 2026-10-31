@@ -3,7 +3,7 @@
 Start a task with one key, finish it with one key: you never pick a workspace number or maintain a workspace.
 Send a window to a named task workspace, open what you need there, then close the task's windows or move them back.
 
-<img src="docs/assets/hero.png" width="640" alt="Send one window to a named task workspace, open the other windows you need there, then finish the group by closing its windows or moving them back.">
+<img src="docs/assets/hero.png" width="800" alt="Send one window to a named task workspace, open the other windows you need there, then finish the group by closing its windows or moving them back.">
 
 Example: send one window to a task, then open the other windows you need inside it. Finish handles the windows on that task workspace.
 
