@@ -1,6 +1,6 @@
-# Contributing to taskhop
+# Contributing to Taskspaces
 
-Thanks for helping. taskhop is one helper script and one bar widget, so small, focused changes are easiest to review.
+Thanks for helping. Taskspaces is one helper script and one bar widget, so small, focused changes are easiest to review.
 
 ## Before you start
 
@@ -10,8 +10,8 @@ Thanks for helping. taskhop is one helper script and one bar widget, so small, f
 ## Set up
 
 ```bash
-git clone https://github.com/tithi-stack/taskhop.git
-cd taskhop
+git clone https://github.com/tithi-stack/omarchy-taskspaces.git
+cd omarchy-taskspaces
 ```
 
 Run the tests from the repository root:
@@ -30,7 +30,7 @@ omarchy plugin validate .
 
 ## Continuous integration
 
-GitHub Actions runs the tests, ShellCheck on `bin/taskhop`, and a dry-run check on every push and pull request. The workflow is in `.github/workflows/ci.yml`.
+GitHub Actions runs the tests, ShellCheck on `bin/taskspaces`, and a dry-run check on every push and pull request. The workflow is in `.github/workflows/ci.yml`.
 
 ## Making a change
 
@@ -53,7 +53,7 @@ Use [Conventional Commits](https://www.conventionalcommits.org/):
 
 ## Versions
 
-Keep the version in `manifest.json` and the output of `taskhop --version` the same. Releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+Keep the version in `manifest.json` and the output of `taskspaces --version` the same. Releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Keep personal data out
 

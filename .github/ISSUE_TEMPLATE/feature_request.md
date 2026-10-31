@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest a change to taskhop
+about: Suggest a change to Taskspaces
 labels: enhancement
 ---
 
@@ -10,7 +10,7 @@ What are you trying to do, and what gets in the way?
 
 **Proposed behavior**
 
-What should taskhop do?
+What should Taskspaces do?
 
 **Alternatives you considered**
 

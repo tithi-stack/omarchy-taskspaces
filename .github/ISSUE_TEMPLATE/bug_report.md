@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Something taskhop does wrong
+about: Something Taskspaces does wrong
 labels: bug
 ---
 
@@ -18,7 +18,7 @@ A short description.
 
 **Versions**
 
-- taskhop: output of `taskhop --version`
+- Taskspaces: output of `taskspaces --version`
 - Omarchy: output of `cat /usr/share/omarchy/version`
 - Hyprland: output of `hyprctl version`
 

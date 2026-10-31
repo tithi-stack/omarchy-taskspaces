@@ -1,26 +1,26 @@
-# How taskhop works
+# How Taskspaces works
 
-This page describes taskhop 0.1.0. The automated tests use mock commands. Omarchy Quattro has not been tested yet.
+This page describes Taskspaces 0.1.0. The automated tests use mock commands. Omarchy Quattro has not been tested yet.
 
 ## Goals
 
 - **No fixed assignments:** a task is not tied to an app. Its windows go where the task is.
 - **Low mental load:** you never pick a workspace number, and you keep no per-workspace shortcuts. Three keys cover send, silent send, and finish.
 - **Safe close:** finish sends each window a normal close request, so an app's own unsaved-changes prompt can still appear (not tested here).
-- **No force-kill:** taskhop never kills a process. A window that stays open keeps its task unfinished.
-- **Nothing edits your config:** taskhop does not change Hyprland or Omarchy settings. You paste the bindings yourself.
+- **No force-kill:** Taskspaces never kills a process. A window that stays open keeps its task unfinished.
+- **Nothing edits your config:** Taskspaces does not change Hyprland or Omarchy settings. You paste the bindings yourself.
 
 ## Terms
 
 | Term | Meaning |
 |---|---|
-| Task | A workspace that taskhop has named. Each task has one record file. |
+| Task | A workspace that Taskspaces has named. Each task has one record file. |
 | Source | The workspace a task's window came from. Finishing returns windows there. |
 | In-place task | A task made from a numbered workspace with **Make workspace N a task…**. It keeps its number. |
 
 ## Send menu
 
-`taskhop send` opens a menu. Rows that do not apply to your current workspace are hidden.
+`taskspaces send` opens a menu. Rows that do not apply to your current workspace are hidden.
 
 | Row | Shown when | What it does |
 |---|---|---|
@@ -30,7 +30,7 @@ This page describes taskhop 0.1.0. The automated tests use mock commands. Omarch
 | **Make workspace N a task…** | On a numbered workspace with no task record | Turns that workspace into an in-place task |
 | **Send to: <task>** / **Move to: <workspace>** | Other tasks, and other workspaces that are not tasks | Moves the window there. Only a task gets a record. |
 
-`taskhop send --silent` uses the same menu and moves the window without following it.
+`taskspaces send --silent` uses the same menu and moves the window without following it.
 
 ### Name rules
 
@@ -52,11 +52,11 @@ The suggested name comes from the window title.
 
 ## Finish
 
-`taskhop finish` works only on a task workspace. On any other workspace you get "This workspace isn't a task".
+`taskspaces finish` works only on a task workspace. On any other workspace you get "This workspace isn't a task".
 
 - **No windows:** the task record is removed, and focus returns to the source workspace, or to the lowest other numbered workspace if the source is gone. For an in-place task, the workspace gets its number back as its name, and focus stays where it is.
 - **Windows present:** a menu offers three rows.
-  - **Close N windows and finish:** sends each window a close request, never a kill. taskhop checks every 0.25 seconds, for up to 30 seconds. It stops early if no window has closed for 5 seconds and no new window has appeared. If windows remain, the task is kept, and a notification names up to three of them by title.
+  - **Close N windows and finish:** sends each window a close request, never a kill. Taskspaces checks every 0.25 seconds, for up to 30 seconds. It stops early if no window has closed for 5 seconds and no new window has appeared. If windows remain, the task is kept, and a notification names up to three of them by title.
   - **Move windows to ws N and finish:** moves the windows back to the source, then finishes. For an in-place task this row reads **Keep windows here and finish**.
   - **Cancel:** does nothing.
 
@@ -64,16 +64,16 @@ The suggested name comes from the window title.
 
 - A new task takes the lowest positive workspace number that no workspace currently uses. With workspaces 1, 2, and 4 in use, a new task takes 3.
 - While the task exists, pressing `SUPER + 3` goes to the task, because the task is workspace 3. This follows from the number rule. It is not tested on a live desktop.
-- taskhop does not rebind keys or rename numbered workspaces, except for the number a task takes.
+- Taskspaces does not rebind keys or rename numbered workspaces, except for the number a task takes.
 - When an in-place task finishes, its number becomes its name again.
 
 ## Files and state
 
-- **Task records:** one JSON file per task, at `$XDG_RUNTIME_DIR/taskhop/<workspace id>.json`. Each record holds the name, the workspace ID, the source, and the creation time.
-- **Lock:** `$XDG_RUNTIME_DIR/taskhop.lock` stops two actions from running at once. A second action exits without a message.
-- **Messages:** notifications use `omarchy-notification-send`, or `notify-send` if that is missing. They have the title `taskhop`. With neither command, messages go to stderr.
-- **Nothing else:** taskhop writes no config files and makes no network calls. It runs `hyprctl`, `jq`, `python3`, `flock`, and Omarchy's menu commands, plus a notification command.
-- **Lifetime:** `XDG_RUNTIME_DIR` is per session, so records do not survive a reboot. This is the usual behavior of `XDG_RUNTIME_DIR`, not something taskhop tests.
+- **Task records:** one JSON file per task, at `$XDG_RUNTIME_DIR/taskspaces/<workspace id>.json`. Each record holds the name, the workspace ID, the source, and the creation time.
+- **Lock:** `$XDG_RUNTIME_DIR/taskspaces.lock` stops two actions from running at once. A second action exits without a message.
+- **Messages:** notifications use `omarchy-notification-send`, or `notify-send` if that is missing. They have the title `taskspaces`. With neither command, messages go to stderr.
+- **Nothing else:** Taskspaces writes no config files and makes no network calls. It runs `hyprctl`, `jq`, `python3`, `flock`, and Omarchy's menu commands, plus a notification command.
+- **Lifetime:** `XDG_RUNTIME_DIR` is per session, so records do not survive a reboot. This is the usual behavior of `XDG_RUNTIME_DIR`, not something Taskspaces tests.
 
 ## Bar widget
 

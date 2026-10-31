@@ -12,12 +12,12 @@ Initial public release. Target: Omarchy Quattro (4.0.0.alpha).
 
 ### Added
 
-- `taskhop send`: moves the focused window to a named task workspace. The name is suggested from the window title.
-- `taskhop send --silent`: the same, without following the window.
-- `taskhop finish`: closes the task's windows or moves them back, after a confirmation menu.
-- `taskhop --help` and `taskhop --version`.
+- `taskspaces send`: moves the focused window to a named task workspace. The name is suggested from the window title.
+- `taskspaces send --silent`: the same, without following the window.
+- `taskspaces finish`: closes the task's windows or moves them back, after a confirmation menu.
+- `taskspaces --help` and `taskspaces --version`.
 - Bar widget that shows the task name on a task workspace and the window title elsewhere.
 - Documentation: README, how-it-works page, security policy, and contributing guide.
 
-[Unreleased]: https://github.com/tithi-stack/taskhop/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/tithi-stack/taskhop/releases/tag/v0.1.0
+[Unreleased]: https://github.com/tithi-stack/omarchy-taskspaces/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/tithi-stack/omarchy-taskspaces/releases/tag/v0.1.0

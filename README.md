@@ -1,4 +1,4 @@
-# taskhop
+# Taskspaces
 
 Turn the window you're in into a task: one key to start, one key to finish.
 
@@ -28,12 +28,12 @@ The keys are suggestions. You choose them in [Bindings](#bindings).
 
 ## How it differs
 
-Parts of this exist in other projects. Some tools give you places to organize windows, such as pre-declared workspaces or bar switchers. Another is a heavier task manager. taskhop's difference is the lifecycle: the workspace is made for a task and finished with it. Numbered workspaces keep their names and bindings, except that a task takes one number (see [Workspace numbers](docs/how-it-works.md#workspace-numbers)).
+Parts of this exist in other projects. Some tools give you places to organize windows, such as pre-declared workspaces or bar switchers. Another is a heavier task manager. Taskspaces differs in the lifecycle: the workspace is made for a task and finished with it. Numbered workspaces keep their names and bindings, except that a task takes one number (see [Workspace numbers](docs/how-it-works.md#workspace-numbers)).
 
 - **[jsimonrichard/hypr-taskspace](https://github.com/jsimonrichard/hypr-taskspace)** is a heavier task manager. Each task gets its own named workspaces. It can use git worktrees for linked repos, runs a systemd user daemon (`tskd`), and opens a control overlay on `SUPER + Tab`. Choose it if you want that model.
 - **[tornikegomareli/omarchy-spaces](https://github.com/tornikegomareli/omarchy-spaces)** is a different tool: a bar workspace switcher that shows the apps open on each workspace. Its README describes switching and previews, not sending windows to tasks.
 
-taskhop has no daemon and no overlay. It is one helper script and one bar widget. Both project descriptions were checked on 2026-10-30.
+Taskspaces has no daemon and no overlay. It is one helper script and one bar widget. Both project descriptions were checked on 2026-10-30.
 
 ## Requirements
 
@@ -53,49 +53,49 @@ The helper also needs the `XDG_RUNTIME_DIR` variable set. See [Troubleshooting](
 
 1. Add the plugin. Omarchy shows a warning and asks you to confirm before it clones.
    ```bash
-   omarchy plugin add https://github.com/tithi-stack/taskhop
+   omarchy plugin add https://github.com/tithi-stack/omarchy-taskspaces
    ```
 2. Enable it. If you answered yes to "Enable now?" in step 1, skip this step.
    ```bash
-   omarchy plugin enable tithi-stack.taskhop
+   omarchy plugin enable tithi-stack.taskspaces
    ```
 3. Optional: place the widget in a bar section. It starts in its default section, which is the center unless its manifest sets another. To move it:
    ```bash
-   omarchy bar move tithi-stack.taskhop --section center
+   omarchy bar move tithi-stack.taskspaces --section center
    ```
-4. Paste the bindings from [Bindings](#bindings) into `~/.config/hypr/bindings.lua`. taskhop never edits this file.
+4. Paste the bindings from [Bindings](#bindings) into `~/.config/hypr/bindings.lua`. Taskspaces never edits this file.
 5. Reload Hyprland, then check for config errors. Fix any errors before you test.
    ```bash
    hyprctl reload && hyprctl configerrors
    ```
 6. Optional: put the helper on your `PATH`, if `~/.local/bin` is on it.
    ```bash
-   ln -s ~/.config/omarchy/plugins/tithi-stack.taskhop/bin/taskhop ~/.local/bin/taskhop
+   ln -s ~/.config/omarchy/plugins/tithi-stack.taskspaces/bin/taskspaces ~/.local/bin/taskspaces
    ```
 
-Updates: `omarchy plugin update tithi-stack.taskhop`. The bindings point at the helper inside the plugin folder, so you do not change them after an update.
+Updates: `omarchy plugin update tithi-stack.taskspaces`. The bindings point at the helper inside the plugin folder, so you do not change them after an update.
 
 ## Bindings
 
 Paste these into `~/.config/hypr/bindings.lua`:
 
 ```lua
--- taskhop: send the focused window to a task, or finish the task
-local taskhop_bin = os.getenv("HOME") .. "/.config/omarchy/plugins/tithi-stack.taskhop/bin/taskhop"
-o.bind("SUPER + N", "Send window to task", taskhop_bin .. " send")
-o.bind("SUPER + ALT + N", "Send window to task (stay here)", taskhop_bin .. " send --silent")
-o.bind("SUPER + D", "Finish task", taskhop_bin .. " finish")
+-- taskspaces: send the focused window to a task, or finish the task
+local taskspaces_bin = os.getenv("HOME") .. "/.config/omarchy/plugins/tithi-stack.taskspaces/bin/taskspaces"
+o.bind("SUPER + N", "Send window to task", taskspaces_bin .. " send")
+o.bind("SUPER + ALT + N", "Send window to task (stay here)", taskspaces_bin .. " send --silent")
+o.bind("SUPER + D", "Finish task", taskspaces_bin .. " finish")
 ```
 
 The keys are suggestions. If you have already remapped `SUPER + N`, `SUPER + ALT + N`, or `SUPER + D`, change the keys in the snippet to free ones.
 
 | Keys | Action | Command |
 |---|---|---|
-| `SUPER + N` | Send the focused window to a task, then follow it | `taskhop send` |
-| `SUPER + ALT + N` | Send the focused window to a task, and stay here | `taskhop send --silent` |
-| `SUPER + D` | Finish the current task | `taskhop finish` |
+| `SUPER + N` | Send the focused window to a task, then follow it | `taskspaces send` |
+| `SUPER + ALT + N` | Send the focused window to a task, and stay here | `taskspaces send --silent` |
+| `SUPER + D` | Finish the current task | `taskspaces finish` |
 
-`taskhop --help` prints usage. `taskhop --version` prints `0.1.0`.
+`taskspaces --help` prints usage. `taskspaces --version` prints `0.1.0`.
 
 ### Conflict check
 
@@ -104,7 +104,7 @@ The keys are suggestions. If you have already remapped `SUPER + N`, `SUPER + ALT
   ```bash
   hyprctl -j binds | jq -r '.[] | select(.key == "N" or .key == "D") | "\(.modmask) \(.key) \(.dispatcher)"'
   ```
-  Modmask `64` means `SUPER`, and `72` means `SUPER + ALT`. A line with `64` or `72` for `N` or `D` means that key is already bound. Find the other bind in `~/.config/hypr/bindings.lua` before you add taskhop's line.
+  Modmask `64` means `SUPER`, and `72` means `SUPER + ALT`. A line with `64` or `72` for `N` or `D` means that key is already bound. Find the other bind in `~/.config/hypr/bindings.lua` before you add taskspaces's line.
 - To rebind a taken key, call `hl.unbind("SUPER + N")` before the matching `o.bind(...)` line, and note what the key did before.
 
 ## Usage
@@ -115,26 +115,26 @@ The keys are suggestions. If you have already remapped `SUPER + N`, `SUPER + ALT
 4. The window moves to a new workspace named after the task, and you follow it. A notification says `Task "Reply to the team" → workspace N`.
 5. Work in the task. The bar shows `◆ Reply to the team`.
 6. Press `SUPER + D` to finish. If the task still has windows, a menu offers **Close N windows and finish**, **Move windows to ws N and finish** (or **Keep windows here and finish** for a task made from a numbered workspace), or **Cancel**.
-7. Choose one. A window that stays open, for example because an app asks you to save, keeps the task. taskhop stops waiting after 30 seconds and notifies you, naming up to three windows that are still open.
+7. Choose one. A window that stays open, for example because an app asks you to save, keeps the task. Taskspaces stops waiting after 30 seconds and notifies you, naming up to three windows that are still open.
 
-To send without following, press `SUPER + ALT + N` in step 2. The full menu rows and naming rules are in [How taskhop works](docs/how-it-works.md).
+To send without following, press `SUPER + ALT + N` in step 2. The full menu rows and naming rules are in [How Taskspaces works](docs/how-it-works.md).
 
 ## Uninstall
 
-1. Delete the `taskhop_bin` line and the three `o.bind` lines from `~/.config/hypr/bindings.lua`. Then run `hyprctl reload`.
-2. If you made the optional symlink in step 6, remove it: `rm ~/.local/bin/taskhop`.
+1. Delete the `taskspaces_bin` line and the three `o.bind` lines from `~/.config/hypr/bindings.lua`. Then run `hyprctl reload`.
+2. If you made the optional symlink in step 6, remove it: `rm ~/.local/bin/taskspaces`.
 3. Remove the plugin. This disables it, then deletes its folder:
    ```bash
-   omarchy plugin remove tithi-stack.taskhop
+   omarchy plugin remove tithi-stack.taskspaces
    ```
 4. Optional: delete leftover task records. They live in the runtime directory, which your session normally clears.
    ```bash
-   rm -rf "${XDG_RUNTIME_DIR:?}/taskhop"
+   rm -rf "${XDG_RUNTIME_DIR:?}/taskspaces"
    ```
 
 ## Troubleshooting
 
-- **The key does nothing.** Cause: another taskhop action holds the lock, and the helper exits silently when it cannot get it. Or the bind did not load. Fix: wait a second and press again. If it still does nothing, run `hyprctl configerrors`.
+- **The key does nothing.** Cause: another Taskspaces action holds the lock, and the helper exits silently when it cannot get it. Or the bind did not load. Fix: wait a second and press again. If it still does nothing, run `hyprctl configerrors`.
 - **Notification: "No window focused".** Cause: no window had focus when you pressed `SUPER + N`. Fix: focus a window and press it again.
 - **Notification: "This workspace isn't a task".** Cause: `SUPER + D` ran on a plain workspace. Fix: switch to the task workspace, then press `SUPER + D`.
 - **Notification: "Dispatch failed: <reason>".** Cause: Hyprland rejected a command, or did not reply ("no reply from Hyprland"). Fix: run `hyprctl version`. If that fails, Hyprland is not reachable from this shell. If it works, the reason after the colon is Hyprland's reply to the rejected command.
@@ -155,11 +155,11 @@ To send without following, press `SUPER + ALT + N` in step 2. The full menu rows
 - Version 0.1.0, alpha. Target: Omarchy Quattro (4.0.0.alpha).
 - Automated tests use mock `hyprctl` and menu commands. Quattro has not been tested yet.
 - Legacy `.conf` support: unverified.
-- Limits: a task takes a workspace number. Finish can close windows, and taskhop does not answer their save prompts.
+- Limits: a task takes a workspace number. Finish can close windows, and Taskspaces does not answer their save prompts.
 
 ## More
 
-- [How taskhop works](docs/how-it-works.md): menus, naming rules, finish behavior, and state files
+- [How Taskspaces works](docs/how-it-works.md): menus, naming rules, finish behavior, and state files
 - [CONTRIBUTING.md](CONTRIBUTING.md): tests and how to propose changes
 - [SECURITY.md](SECURITY.md): what the plugin runs, and how to report a vulnerability
 - [CHANGELOG.md](CHANGELOG.md): release history
