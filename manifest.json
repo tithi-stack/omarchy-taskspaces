@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "id": "tithi-stack.taskhop",
+  "name": "taskhop",
+  "version": "0.1.0",
+  "author": "tithi-stack",
+  "license": "MIT",
+  "description": "Turn the window you're in into a task: one key to start, one key to finish.",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "TaskLabel.qml" },
+  "barWidget": {
+    "displayName": "taskhop",
+    "description": "Task name on named workspaces, otherwise the active window title",
+    "category": "Compositor",
+    "allowMultiple": false,
+    "defaultSection": "center",
+    "defaults": {
+      "maxWidth": 450,
+      "taskMaxWidth": 220,
+      "taskGlyph": "◆"
+    },
+    "schema": [
+      {
+        "key": "maxWidth",
+        "type": "integer",
+        "label": "Max width of a window title (pixels)",
+        "min": 60,
+        "max": 1200,
+        "step": 10,
+        "defaultValue": 450
+      },
+      {
+        "key": "taskMaxWidth",
+        "type": "integer",
+        "label": "Max width of a task name (pixels)",
+        "min": 60,
+        "max": 1200,
+        "step": 10,
+        "defaultValue": 220
+      },
+      {
+        "key": "taskGlyph",
+        "type": "string",
+        "label": "Task glyph",
+        "description": "Shown before the task name. Leave empty for no glyph.",
+        "defaultValue": "◆"
+      }
+    ]
+  }
+}
