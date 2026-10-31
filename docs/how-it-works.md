@@ -16,19 +16,21 @@ This page describes Taskspaces 0.1.0. The automated tests use mock commands. Oma
 |---|---|
 | Task | A workspace that Taskspaces has named. Each task has one record file. |
 | Source | The workspace a task's window came from. Finishing returns windows there. |
-| In-place task | A task made from a numbered workspace with **Make workspace N a task…**. It keeps its number. |
+| In-place task | A task made from a numbered workspace with **Turn workspace S into a task…**. It keeps its number. |
 
 ## Send menu
 
 `taskspaces send` opens a menu. Rows that do not apply to your current workspace are hidden.
 
-| Row | Shown when | What it does |
-|---|---|---|
-| **New task: <name>** | Always | Creates a task with the suggested name |
-| **New task, type a name…** | Always | Creates a task with a name you type |
-| **Rename this task…** | On a task workspace | Renames the task |
-| **Make workspace N a task…** | On a numbered workspace with no task record | Turns that workspace into an in-place task |
-| **Send to: <task>** / **Move to: <workspace>** | Other tasks, and other workspaces that are not tasks | Moves the window there. Only a task gets a record. |
+| Row | Grey line | Shown when | What it does |
+|---|---|---|---|
+| `Start task "<name>"` | `name suggested from the window title`; for Chrome, `name suggested from the window title · whole window (all tabs)` | Always | Creates a task with the suggested name |
+| **Start task with my own name…** | — | Always | Creates a task with a name you type |
+| **Rename this task…** | — | On a task workspace | Renames the task |
+| **Turn workspace S into a task…** | `windows stay where they are` | On a numbered workspace with no task record | Turns that workspace into an in-place task |
+| **Send to: <task>** / **Move to: <workspace>** | Workspace number | Other tasks, and other workspaces that are not tasks | Moves the window there. Only a task gets a record. |
+
+`S` is the source workspace number. A suggested name that makes the main row longer than 50 characters uses `Start "<name>"` instead, preserving the full task name.
 
 `taskspaces send --silent` uses the same menu and moves the window without following it.
 
@@ -45,7 +47,7 @@ The suggested name comes from the window title.
 
 ## Send results
 
-- **New task:** the window moves to the lowest unused workspace number. That workspace is renamed to the task. The record stores the source workspace.
+- **Start task:** the window moves to the lowest unused workspace number. That workspace is renamed to the task. The record stores the source workspace.
 - **Existing task:** the window moves to that task's workspace.
 - **Plain workspace:** the window moves. No record is written.
 - **No focused window:** nothing moves. You get the notification "No window focused".
@@ -56,9 +58,11 @@ The suggested name comes from the window title.
 
 - **No windows:** the task record is removed, and focus returns to the source workspace, or to the lowest other numbered workspace if the source is gone. For an in-place task, the workspace gets its number back as its name, and focus stays where it is.
 - **Windows present:** a menu offers three rows.
-  - **Close N windows and finish:** sends each window a close request, never a kill. Taskspaces checks every 0.25 seconds, for up to 30 seconds. It stops early if no window has closed for 5 seconds and no new window has appeared. If windows remain, the task is kept, and a notification names up to three of them by title.
-  - **Move windows to ws N and finish:** moves the windows back to the source, then finishes. For an in-place task this row reads **Keep windows here and finish**.
+  - **Close 1 window and finish** / **Close N windows and finish:** sends each window a close request, never a kill. The grey line lists the apps. Taskspaces checks every 0.25 seconds, for up to 30 seconds. It stops early if no window has closed for 5 seconds and no new window has appeared. If windows remain, the task is kept, and a notification names up to three of them by title.
+  - **Send 1 window back to workspace S and finish** / **Send N windows back to workspace S and finish:** moves the windows back to the source, then finishes. For an in-place task this row reads **Keep 1 window here and finish** / **Keep N windows here and finish**. Both variants have the grey line `nothing is closed`.
   - **Cancel:** does nothing.
+
+`N` is the window count (two or more for the plural rows); `S` is the source workspace number. The menus open at width 600. For example, `Send 10 windows back to workspace 10 and finish` is 47 characters, within the 50-character main-text limit.
 
 ## Workspace numbers
 

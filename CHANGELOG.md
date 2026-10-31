@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- Clearer send-menu labels: `Start task "<name>"`, `Start task with my own name…`, and `Turn workspace S into a task…`, with grey descriptions for suggested names and keeping windows in place. Long suggested names use `Start "<name>"` to fit the menu.
+- Finish rows show the window count with `window` or `windows`; `Send N windows back to workspace S and finish` and `Keep N windows here and finish` say `nothing is closed` in grey. Row actions are unchanged.
+
 ## [0.1.0] - 2026-10-30
 
 Initial public release. Target: Omarchy Quattro (4.0.0.alpha).

@@ -36,7 +36,7 @@ if cmd == 'hyprctl':
             print('mock dispatcher failure')
             sys.exit(0)
         if dsp.startswith('hl.dsp.workspace.rename'):
-            ws, name = re.search(r'workspace = "([^"]+)", name = "([^"]+)"', dsp).groups()
+            ws, name = map(json.loads, re.search(r'workspace = ("(?:\\.|[^"\\])*"), name = ("(?:\\.|[^"\\])*")', dsp).groups())
             for w in cfg['workspaces']:
                 if w['id'] == int(ws): w['name'] = name
         if dsp.startswith('hl.dsp.window.close') and not cfg.get('refuse_close'):
@@ -84,7 +84,7 @@ class TaskTests(unittest.TestCase):
                'workspace': {'id': 2, 'name': '2'}}
         self.cfg = {'workspaces': [{'id': 1, 'name': '1'}, {'id': 2, 'name': '2'}],
                     'activewindow': win, 'clients': [win], 'activeworkspace': {'id': 2, 'name': '2'},
-                    'selection': 'Make workspace 2 a task…'}
+                    'selection': 'Turn workspace 2 into a task…\twindows stay where they are'}
         self.write_cfg()
 
     def write_cfg(self):
@@ -135,11 +135,116 @@ class TaskTests(unittest.TestCase):
         (self.state / '3.json').write_text(json.dumps({'id': 3, 'name': 'Other task', 'source': 1}))
         self.run_task('send')
         rows = self.menu()[1:]
-        self.assertIn('New task:', rows[0])
-        self.assertIn('New task, type a name…', rows[1])
-        self.assertIn('Make workspace 2 a task…', rows[2])
+        self.assertEqual(rows[0], '➕\tStart task "Planning"\tname suggested from the window title')
+        self.assertEqual(rows[1], '➕\tStart task with my own name…')
+        self.assertEqual(rows[2], '✎\tTurn workspace 2 into a task…\twindows stay where they are')
         self.assertIn('Send to: Other task', rows[3])
         self.assertIn('Move to: 1', rows[4])
+
+    def test_suggested_send_row_and_description_select_the_same_task(self):
+        for cls in ('kitty', 'google-chrome'):
+            with self.subTest(cls=cls):
+                self.cfg['activewindow']['class'] = cls
+                description = 'name suggested from the window title'
+                if cls == 'google-chrome':
+                    description += ' · whole window (all tabs)'
+                self.cfg['selection'] = 'Start task "Planning"\t' + description
+                self.run_task('send')
+                self.assertEqual(self.menu()[1:4], [
+                    '➕\tStart task "Planning"\t' + description,
+                    '➕\tStart task with my own name…',
+                    '✎\tTurn workspace 2 into a task…\twindows stay where they are',
+                ])
+                self.assertEqual(self.menu()[-3:], ['--', '--width', '600'])
+                self.assertEqual(self.dispatches()[-2:], [
+                    'hl.dsp.window.move({ window = "address:0xabc", workspace = "3", follow = true })',
+                    'hl.dsp.workspace.rename({ workspace = "3", name = "Planning" })',
+                ])
+                self.assertEqual(json.loads((self.state / '3.json').read_text())['source'], 2)
+                self.cfg['workspaces'] = [w for w in self.cfg['workspaces'] if w['id'] != 3]
+                (self.state / '3.json').unlink()
+
+    def test_typed_send_name_with_quotes_is_sanitized(self):
+        self.cfg.update(selection='Start task with my own name…', input='Plan "review"')
+        self.run_task('send')
+        self.assertEqual(self.events('omarchy-menu-input'), [['Task name']])
+        self.assertEqual(self.dispatches(), [
+            'hl.dsp.window.move({ window = "address:0xabc", workspace = "3", follow = true })',
+            'hl.dsp.workspace.rename({ workspace = "3", name = "Plan review" })',
+        ])
+        self.assertEqual(json.loads((self.state / '3.json').read_text())['name'], 'Plan review')
+
+    def test_quoted_suggested_name_matches_row_and_is_escaped_for_lua(self):
+        # An unknown app's fallback label can contain a quote even though titles are sanitized.
+        self.cfg['activewindow'].update({'class': 'demo"app', 'title': ''})
+        name = 'Demo"app task'
+        self.cfg['selection'] = f'Start task "{name}"\tname suggested from the window title'
+        self.run_task('send')
+        self.assertIn('➕\t' + self.cfg['selection'], self.menu())
+        self.assertEqual(self.dispatches(), [
+            'hl.dsp.window.move({ window = "address:0xabc", workspace = "3", follow = true })',
+            r'hl.dsp.workspace.rename({ workspace = "3", name = "Demo\"app task" })',
+        ])
+        self.assertEqual(json.loads((self.state / '3.json').read_text())['name'], name)
+
+    def test_long_suggested_name_fits_menu_without_changing_task_name(self):
+        name = 'Team ' * 7 + 'notes'
+        self.cfg['activewindow']['title'] = name
+        self.cfg['selection'] = f'Start "{name}"\tname suggested from the window title'
+        self.run_task('send')
+        self.assertIn('➕\t' + self.cfg['selection'], self.menu())
+        self.assertLessEqual(len(self.menu()[1].split('\t')[1]), 50)
+        self.assertEqual(json.loads((self.state / '3.json').read_text())['name'], name)
+
+    def test_finish_return_rows_counts_descriptions_and_actions(self):
+        for count in (1, 2, 10):
+            with self.subTest(count=count):
+                self.record(source=10)
+                self.cfg['workspaces'] = [{'id': 10, 'name': '10'}, {'id': 2, 'name': 'Planning'}]
+                self.cfg['clients'] = [dict(self.cfg['activewindow'], address=f'0x{i:x}')
+                                       for i in range(count)]
+                noun = 'window' if count == 1 else 'windows'
+                label = f'Send {count} {noun} back to workspace 10 and finish'
+                self.cfg['selection'] = label + '\tnothing is closed'
+                (self.root / 'events.jsonl').unlink(missing_ok=True)
+                self.run_task('finish')
+                summary = 'Terminal' + (f' ×{count}' if count > 1 else '')
+                self.assertEqual(self.menu()[1:-3], [
+                    f'◆\tClose {count} {noun} and finish\t{summary}',
+                    f'↩\t{label}\tnothing is closed', '\tCancel',
+                ])
+                self.assertEqual(self.menu()[-3:], ['--', '--width', '600'])
+                self.assertTrue(all(len(row.split('\t')[1]) <= 50 for row in self.menu()[1:-3]))
+                self.assertEqual(self.dispatches(), [
+                    f'hl.dsp.window.move({{ window = "address:0x{i:x}", workspace = "10", follow = false }})'
+                    for i in range(count)
+                ] + ['hl.dsp.focus({ workspace = "10" })'])
+                self.assertEqual(len(self.cfg['clients']), count)
+                self.assertFalse((self.state / '2.json').exists())
+
+    def test_finish_close_plural_row_closes_every_window(self):
+        self.record(source=1)
+        self.cfg['clients'].append(dict(self.cfg['activewindow'], address='0xdef'))
+        self.cfg['selection'] = 'Close 2 windows and finish\tTerminal ×2'
+        self.run_task('finish')
+        self.assertEqual(self.dispatches(), [
+            'hl.dsp.window.close({ window = "address:0xabc" })',
+            'hl.dsp.window.close({ window = "address:0xdef" })',
+            'hl.dsp.focus({ workspace = "1" })',
+        ])
+        self.assertEqual(self.cfg['clients'], [])
+        self.assertFalse((self.state / '2.json').exists())
+
+    def test_finish_keep_plural_row_keeps_all_windows(self):
+        self.record()
+        self.cfg['clients'].append(dict(self.cfg['activewindow'], address='0xdef'))
+        before = copy.deepcopy(self.cfg['clients'])
+        self.cfg['selection'] = 'Keep 2 windows here and finish\tnothing is closed'
+        self.run_task('finish')
+        self.assertIn('↩\t' + self.cfg['selection'], self.menu())
+        self.assertEqual(self.dispatches(), ['hl.dsp.workspace.rename({ workspace = "2", name = "2" })'])
+        self.assertEqual(self.cfg['clients'], before)
+        self.assertFalse((self.state / '2.json').exists())
 
     def test_adopt_cleans_deduplicates_and_never_moves_or_focuses(self):
         self.cfg['input'] = '  A<$`>  plan\n '
@@ -177,20 +282,20 @@ class TaskTests(unittest.TestCase):
                 self.cfg['workspaces'][1] = {'id': wsid, 'name': name}
                 self.cfg['activewindow']['workspace']['id'] = wsid
                 self.run_task('send')
-                self.assertFalse(any('Make workspace' in row for row in self.menu()))
+                self.assertFalse(any('Turn workspace' in row for row in self.menu()))
                 self.assert_no_effect()
 
     def test_existing_task_has_rename_only(self):
         self.record(source=1)
         self.run_task('send')
         self.assertIn('✎\tRename this task…', self.menu())
-        self.assertFalse(any('Make workspace' in row for row in self.menu()))
+        self.assertFalse(any('Turn workspace' in row for row in self.menu()))
         self.assertEqual(self.dispatches(), [])
 
     def test_plain_workspace_with_valid_state_cannot_adopt(self):
         (self.state / '2.json').write_text(json.dumps({'id': 2, 'name': '2', 'source': 1}))
         self.run_task('send')
-        self.assertFalse(any('Make workspace' in row for row in self.menu()))
+        self.assertFalse(any('Turn workspace' in row for row in self.menu()))
         self.assertEqual(self.dispatches(), [])
 
     def test_recheck_vanished_or_renamed_workspace(self):
@@ -221,12 +326,12 @@ class TaskTests(unittest.TestCase):
     def test_keep_in_place_restores_number_removes_state_and_keeps_focus(self):
         self.record()
         before = copy.deepcopy(self.cfg['clients'])
-        self.cfg['selection'] = 'Keep windows here and finish'
+        self.cfg['selection'] = 'Keep 1 window here and finish'
         self.run_task('finish')
-        self.assertIn('↩\tKeep windows here and finish', self.menu())
-        self.assertIn('◆\tClose 1 windows and finish\tTerminal', self.menu())
+        self.assertIn('↩\tKeep 1 window here and finish\tnothing is closed', self.menu())
+        self.assertIn('◆\tClose 1 window and finish\tTerminal', self.menu())
         self.assertIn('\tCancel', self.menu())
-        self.assertFalse(any('Move windows' in row for row in self.menu()))
+        self.assertFalse(any('back to workspace' in row for row in self.menu()))
         self.assertEqual(self.dispatches(), ['hl.dsp.workspace.rename({ workspace = "2", name = "2" })'])
         self.assertEqual(self.cfg['clients'], before)
         self.assertEqual(self.cfg['workspaces'][1]['name'], '2')
@@ -234,7 +339,7 @@ class TaskTests(unittest.TestCase):
 
     def test_close_in_place_resets_number_without_focus_dispatch(self):
         self.record()
-        self.cfg['selection'] = 'Close 1 windows and finish\tTerminal'
+        self.cfg['selection'] = 'Close 1 window and finish\tTerminal'
         self.run_task('finish')
         self.assertEqual(self.dispatches(), ['hl.dsp.window.close({ window = "address:0xabc" })',
                                              'hl.dsp.workspace.rename({ workspace = "2", name = "2" })'])
@@ -243,14 +348,14 @@ class TaskTests(unittest.TestCase):
 
     def test_closed_workspace_gone_needs_no_rename_or_focus(self):
         self.record()
-        self.cfg.update(selection='Close 1 windows and finish', remove_empty_workspace=True)
+        self.cfg.update(selection='Close 1 window and finish', remove_empty_workspace=True)
         self.run_task('finish')
         self.assertEqual(self.dispatches(), ['hl.dsp.window.close({ window = "address:0xabc" })'])
         self.assertFalse((self.state / '2.json').exists())
 
     def test_refused_close_retains_task_and_does_not_reset_or_focus(self):
         record = self.record()
-        self.cfg.update(selection='Close 1 windows and finish', refuse_close=True)
+        self.cfg.update(selection='Close 1 window and finish', refuse_close=True)
         self.run_task('finish')
         self.assertEqual(self.dispatches(), ['hl.dsp.window.close({ window = "address:0xabc" })'])
         self.assertEqual(json.loads((self.state / '2.json').read_text()), record)
@@ -266,7 +371,7 @@ class TaskTests(unittest.TestCase):
 
     def test_failed_reset_preserves_task_state(self):
         record = self.record()
-        self.cfg.update(selection='Keep windows here and finish', dispatch_error=True)
+        self.cfg.update(selection='Keep 1 window here and finish', dispatch_error=True)
         self.run_task('finish', expected=1)
         self.assertEqual(json.loads((self.state / '2.json').read_text()), record)
 
@@ -303,10 +408,10 @@ class TaskTests(unittest.TestCase):
         close = 'hl.dsp.window.close({ window = "address:0xabc" })'
         focus = 'hl.dsp.focus({ workspace = "1" })'
         scenarios = {
-            'move': ('Move windows to ws 1 and finish', [move, focus]),
-            'close': ('Close 1 windows and finish', [close, focus]),
+            'move': ('Send 1 window back to workspace 1 and finish', [move, focus]),
+            'close': ('Close 1 window and finish', [close, focus]),
             'empty': ('Cancel', [focus]),
-            'fallback': ('Move windows to ws 1 and finish', [move, focus]),
+            'fallback': ('Send 1 window back to workspace 1 and finish', [move, focus]),
         }
         for scenario, (selection, expected) in scenarios.items():
             with self.subTest(scenario=scenario):

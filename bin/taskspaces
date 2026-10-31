@@ -171,17 +171,19 @@ send_task() {
   workspaces=$(hyprctl workspaces -j)
   prune
   suggested=$(dedupe "$(suggest_name "$cls" "$title")")
-  local first="New task: $suggested" typed='New task, type a name…' rename='Rename this task…'
-  local adopt="Make workspace $source a task…" can_adopt=false
-  local -a rows=("$(printf '➕\t%s' "$first")" "$(printf '➕\t%s' "$typed")")
-  [[ $cls != google-chrome ]] || rows[0]+=$'\twhole window (all tabs)'
+  local first="Start task \"$suggested\"" typed='Start task with my own name…' rename='Rename this task…'
+  # Keep long names intact while fitting the main label within 50 characters.
+  (( ${#first} <= 50 )) || first="Start \"$suggested\""
+  local adopt="Turn workspace $source into a task…" can_adopt=false
+  local -a rows=("$(printf '➕\t%s\tname suggested from the window title' "$first")" "$(printf '➕\t%s' "$typed")")
+  [[ $cls != google-chrome ]] || rows[0]+=' · whole window (all tabs)'
   local source_record
   source_record=$(jq -c --argjson source "$source" 'first(.[] | select(.id == $source)) // empty' <<< "$tasks")
   [[ -z $source_record ]] || rows+=("$(printf '✎\t%s' "$rename")")
   if [[ -z $source_record && ! -e $state_dir/$source.json ]] && jq -e --argjson id "$source" \
     'any(.[]; .id == $id and .id > 0 and .name == ($id | tostring))' <<< "$workspaces" >/dev/null; then
     can_adopt=true
-    rows+=("$(printf '✎\t%s' "$adopt")")
+    rows+=("$(printf '✎\t%s\twindows stay where they are' "$adopt")")
   fi
   while IFS= read -r record; do
     rows+=("$(jq -r '"◆\tSend to: " + .name + "\tws " + (.id | tostring)' <<< "$record")")
@@ -200,7 +202,7 @@ send_task() {
     rename_task "$source" "$cls" "$source_record"
     return
   fi
-  if [[ $selection == "$adopt" ]] && $can_adopt; then
+  if [[ $row == "$adopt" ]] && $can_adopt; then
     make_workspace_task "$source" "$cls"
     return
   fi
@@ -296,10 +298,12 @@ for w in json.loads(sys.argv[1]):
 print(', '.join(k + (' ×' + str(v) if v > 1 else '') for k, v in collections.Counter(items).items()))
 PY
   )
-  local close_row="Close $count windows and finish" move_row="Move windows to ws $source and finish"
-  [[ $source != "$id" ]] || move_row='Keep windows here and finish'
+  local windows="$count windows"
+  (( count != 1 )) || windows='1 window'
+  local close_row="Close $windows and finish" move_row="Send $windows back to workspace $source and finish"
+  [[ $source != "$id" ]] || move_row="Keep $windows here and finish"
   if $dry; then selection=$close_row; else
-    selection=$(omarchy-menu-select "Finish \"$name\"?" "$(printf '◆\t%s\t%s' "$close_row" "$summary")" "$(printf '↩\t%s' "$move_row")" $'\tCancel' -- --width 600) || return 0
+    selection=$(omarchy-menu-select "Finish \"$name\"?" "$(printf '◆\t%s\t%s' "$close_row" "$summary")" "$(printf '↩\t%s\tnothing is closed' "$move_row")" $'\tCancel' -- --width 600) || return 0
   fi
   selection=${selection%%$'\t'*}
   if [[ $selection == "$move_row" ]]; then
