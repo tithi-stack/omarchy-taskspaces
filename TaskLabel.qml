@@ -10,7 +10,7 @@ import qs.Ui
 // Read-only: this widget never focuses, moves or closes a window.
 BarWidget {
   id: root
-  moduleName: "tithi-stack.taskhop"
+  moduleName: "tithi-stack.taskspaces"
 
   readonly property var monitor: {
     var window = root.QsWindow.window

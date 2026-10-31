@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "id": "tithi-stack.taskhop",
-  "name": "taskhop",
+  "id": "tithi-stack.taskspaces",
+  "name": "Taskspaces",
   "version": "0.1.0",
   "author": "tithi-stack",
   "license": "MIT",
@@ -9,7 +9,7 @@
   "kinds": ["bar-widget"],
   "entryPoints": { "barWidget": "TaskLabel.qml" },
   "barWidget": {
-    "displayName": "taskhop",
+    "displayName": "Taskspaces",
     "description": "Task name on named workspaces, otherwise the active window title",
     "category": "Compositor",
     "allowMultiple": false,
