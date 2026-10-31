@@ -16,8 +16,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck jq
-      - name: Lint bin/taskhop
-        run: shellcheck bin/taskhop
+      - name: Lint bin/taskspaces
+        run: shellcheck bin/taskspaces
       - name: Unit tests
         run: python3 -m unittest discover -s tests
       - name: Dry-run check
