@@ -63,7 +63,7 @@ lua_string() {
 notify() {
   if $dry; then printf 'Notification: %s\n' "$*"; else
     if command -v omarchy-notification-send >/dev/null; then
-      omarchy-notification-send -g '◆' 'taskspaces' "$*" >/dev/null || true
+      omarchy-notification-send -g '󰌨' 'taskspaces' "$*" >/dev/null || true
     elif command -v notify-send >/dev/null; then
       notify-send 'taskspaces' "$*" || true
     else

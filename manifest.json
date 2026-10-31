@@ -17,7 +17,7 @@
     "defaults": {
       "maxWidth": 450,
       "taskMaxWidth": 220,
-      "taskGlyph": "◆"
+      "taskGlyph": "󰌨"
     },
     "schema": [
       {
@@ -43,7 +43,7 @@
         "type": "string",
         "label": "Task glyph",
         "description": "Shown before the task name. Leave empty for no glyph.",
-        "defaultValue": "◆"
+        "defaultValue": "󰌨"
       }
     ]
   }

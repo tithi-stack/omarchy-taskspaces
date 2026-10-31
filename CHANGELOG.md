@@ -27,6 +27,8 @@ Planned initial public release. Target: Omarchy Quattro (4.0.0.alpha).
 
 ### Added
 
+- The default task label and notification icon is the Nerd Font layers glyph 󰌨; saved custom task glyphs still take precedence.
+
 - `taskspaces setup`: consented shortcut setup with conflict alternatives, previews, backups, verified reload and rollback; `--remove` undoes its managed block and `--dry-run` prints without writing.
 - `taskspaces send`: moves the focused window to a named task workspace. The name is suggested from the window title.
 - `taskspaces send --silent`: the same, without following the window.

@@ -761,7 +761,7 @@ class TaskTests(unittest.TestCase):
 
     def test_notifications_use_taskspaces_title(self):
         self.run_task('send')
-        self.assertEqual(self.events('omarchy-notification-send')[-1][:3], ['-g', '◆', 'taskspaces'])
+        self.assertEqual(self.events('omarchy-notification-send')[-1][:3], ['-g', '󰌨', 'taskspaces'])
 
 
 if __name__ == '__main__':
