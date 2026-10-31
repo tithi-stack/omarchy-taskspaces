@@ -5,7 +5,7 @@ Send a window to a named task workspace, open what you need there, then close th
 
 <img src="docs/assets/hero.png" width="640" alt="Send one window to a named task workspace, open the other windows you need there, then finish the group by closing its windows or moving them back.">
 
-Example: send Mail to a task, then open the other windows you need inside it. Finish handles the windows on that task workspace.
+Example: send one window to a task, then open the other windows you need inside it. Finish handles the windows on that task workspace.
 
 ## Why
 
@@ -17,7 +17,7 @@ Picking workspace numbers, remembering what lives where, and tidying up are work
 2. **Work:** Open the windows you need inside the task. The bar shows the task name; there are no workspace notes or shortcuts per workspace to remember.
 3. **Finish:** Press your finish key (`Super+D` by default), then choose Close or Keep. The menu shows where kept windows will go. Close sends normal close requests; a window left open keeps the task unfinished and triggers a notification.
 
-Setup lets you choose free keys for these actions. See [Bindings](#bindings).
+On a numbered workspace, **Turn workspace S into a task…** names it without moving windows; finishing with Keep makes it an ordinary numbered workspace again. Setup lets you choose free keys for these actions. See [Bindings](#bindings).
 
 ## Status and requirements
 
