@@ -2,6 +2,14 @@
 
 This page describes taskhop 0.1.0. The automated tests use mock commands. Omarchy Quattro has not been tested yet.
 
+## Goals
+
+- **No fixed assignments:** a task is not tied to an app. Its windows go where the task is.
+- **Low mental load:** you never pick a workspace number, and you keep no per-workspace shortcuts. Three keys cover send, silent send, and finish.
+- **Safe close:** finish sends each window a normal close request, so an app's own unsaved-changes prompt can still appear (not tested here).
+- **No force-kill:** taskhop never kills a process. A window that stays open keeps its task unfinished.
+- **Nothing edits your config:** taskhop does not change Hyprland or Omarchy settings. You paste the bindings yourself.
+
 ## Terms
 
 | Term | Meaning |
@@ -28,7 +36,7 @@ This page describes taskhop 0.1.0. The automated tests use mock commands. Omarch
 
 The suggested name comes from the window title.
 
-- Removes app suffixes such as ` - Google Chrome` or ` - Visual Studio Code`, and leading marks like `(3)` or `*`.
+- For a short list of known apps, removes the app-name suffix at the end of the title. Also removes leading marks like `(3)` or `*`.
 - Removes URLs, email addresses, long IDs, and numbers with 10 or more digits.
 - Keeps the text before the first ` - `, ` — `, ` – `, ` · `, or ` | `.
 - Removes quotes, brackets, `$`, backticks, and control characters. Caps names at 40 characters.
@@ -48,7 +56,7 @@ The suggested name comes from the window title.
 
 - **No windows:** the task record is removed, and focus returns to the source workspace, or to the lowest other numbered workspace if the source is gone. For an in-place task, the workspace gets its number back as its name, and focus stays where it is.
 - **Windows present:** a menu offers three rows.
-  - **Close N windows and finish:** asks each window to close. taskhop waits up to 30 seconds. If some windows stay open, the task is kept and you get a notification that lists them.
+  - **Close N windows and finish:** sends each window a close request, never a kill. taskhop checks every 0.25 seconds, for up to 30 seconds. It stops early if no window has closed for 5 seconds and no new window has appeared. If windows remain, the task is kept, and a notification names up to three of them by title.
   - **Move windows to ws N and finish:** moves the windows back to the source, then finishes. For an in-place task this row reads **Keep windows here and finish**.
   - **Cancel:** does nothing.
 
