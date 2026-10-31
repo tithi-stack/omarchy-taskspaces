@@ -422,8 +422,7 @@ DESCRIPTIONS = {'send': 'Send window to task', 'silent': 'Send window to task (s
 COMMANDS = {'send': 'send', 'silent': 'send --silent', 'finish': 'finish', 'browser': 'browser'}
 CANDIDATES = {'send': ('SUPER + SHIFT + N', 'SUPER + CTRL + N', 'SUPER + T'),
               'finish': ('SUPER + SHIFT + D', 'SUPER + CTRL + D', 'SUPER + E'),
-              'browser': ('SUPER + CTRL + SHIFT + RETURN', 'SUPER + SHIFT + ALT + RETURN',
-                          'SUPER + CTRL + SHIFT + B')}
+              'browser': ('SUPER + ALT + W', 'SUPER + ALT + C')}
 
 class SetupError(Exception):
     pass
@@ -708,7 +707,7 @@ def consent(selected, block, remove):
 
 
 def offer_browser():
-    key = 'Super+Alt+Return'
+    key = 'Super+Alt+B'
     if shutil.which('omarchy-menu-select'):
         label = 'Add a "new browser window here" shortcut'
         return menu('Browser windows can jump back to where the browser was first opened',
@@ -834,7 +833,7 @@ def setup():
                 if key:
                     selected[action] = key
             if supported and offer_browser():
-                key = choose_key(parse_key('SUPER + ALT + RETURN'), 'browser', selected, stock)
+                key = choose_key(parse_key('SUPER + ALT + B'), 'browser', selected, stock)
                 if key:
                     selected['browser'] = key
             if not selected:

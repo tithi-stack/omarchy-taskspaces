@@ -97,8 +97,8 @@ local taskspaces_bin = os.getenv("HOME") .. "/.config/omarchy/plugins/tithi-stac
 o.bind("SUPER + N", "Send window to task", taskspaces_bin .. " send")
 o.bind("SUPER + ALT + N", "Send window to task (stay here)", taskspaces_bin .. " send --silent")
 o.bind("SUPER + D", "Finish task", taskspaces_bin .. " finish")
--- Optional: choose a free key first; Super+Alt+Return may be taken.
--- o.bind("SUPER + ALT + RETURN", "New browser window here", taskspaces_bin .. " browser")
+-- Optional: check that the key is free before uncommenting.
+-- o.bind("SUPER + ALT + B", "New browser window here", taskspaces_bin .. " browser")
 ```
 
 These are suggested defaults. Use the actual keys you chose in setup or in your manual bindings. After manual changes, run `hyprctl reload` and `hyprctl configerrors`.
@@ -108,7 +108,7 @@ These are suggested defaults. Use the actual keys you chose in setup or in your 
 | `SUPER + N` | Send the focused window to a task, then follow it | `taskspaces send` |
 | `SUPER + ALT + N` | Send the focused window to a task, and stay here | `taskspaces send --silent` |
 | `SUPER + D` | Finish the current task | `taskspaces finish` |
-| `SUPER + ALT + RETURN` (optional; may be taken) | Open a new browser window here | `taskspaces browser` |
+| `SUPER + ALT + B` (optional) | Open a new browser window here | `taskspaces browser` |
 
 `taskspaces --help` prints usage. `taskspaces --version` prints `0.1.0`.
 
@@ -140,7 +140,7 @@ Omarchy's stock browser launcher can hand a request to the running Chromium brow
 
 Supported Chromium browsers: Chromium, Google Chrome (`google-chrome-stable`), Brave, Brave Origin, and Microsoft Edge (`microsoft-edge-stable`). Firefox-based browsers, including Firefox and Zen, and other browsers are not supported yet. With no saved profiles, it reports `No browser profiles found.`; open your browser normally first to create one.
 
-Setup offers this as a separate optional shortcut before the final confirmation. It starts with `Super+Alt+Return`; stock Omarchy can already use that key, so setup checks and offers a free alternative, your own key, or a skip. The stock browser shortcut stays in place. Removing setup's shortcuts with `taskspaces setup --remove` also removes its optional browser line.
+Setup offers this as a separate optional shortcut before the final confirmation. It starts with `Super+Alt+B` (B for browser); if taken, it offers `Super+Alt+W`, then `Super+Alt+C` when free, your own key, or a skip. The stock browser shortcut stays in place. Removing setup's shortcuts with `taskspaces setup --remove` also removes its optional browser line.
 
 ## Uninstall
 

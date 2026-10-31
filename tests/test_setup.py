@@ -484,7 +484,7 @@ class SetupTests(unittest.TestCase):
         self.support_browser()
         self.cfg['choices'] = ['Add a "new browser window here" shortcut', 'Yes']
         result = self.run_setup()
-        browser_line = 'o.bind("SUPER + ALT + RETURN", "New browser window here", taskspaces_bin .. " browser")\n'
+        browser_line = 'o.bind("SUPER + ALT + B", "New browser window here", taskspaces_bin .. " browser")\n'
         block = '\n'.join([START, 'local taskspaces_bin = ' + json.dumps(str(SCRIPT)),
                            'o.bind("SUPER + N", "Send window to task", taskspaces_bin .. " send")',
                            'o.bind("SUPER + ALT + N", "Send window to task (stay here)", taskspaces_bin .. " send --silent")',
@@ -492,14 +492,14 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(self.bindings.read_text(), ORIGINAL + block)
         menus = self.events('omarchy-menu-select')
         self.assertEqual(menus[0][0], 'Browser windows can jump back to where the browser was first opened')
-        self.assertEqual(menus[0][1:3], ['󰀄\tAdd a "new browser window here" shortcut\tSuper+Alt+Return',
+        self.assertEqual(menus[0][1:3], ['󰀄\tAdd a "new browser window here" shortcut\tSuper+Alt+B',
                                         '󰁍\tNot now\tyou can run taskspaces browser any time'])
-        for label in ('Super+N send', 'Super+Alt+N silent', 'Super+D finish', 'Super+Alt+Return browser'):
+        for label in ('Super+N send', 'Super+Alt+N silent', 'Super+D finish', 'Super+Alt+B browser'):
             self.assertIn(label, menus[1][1])
         for menu in menus:
             for row in menu[1:-3]:
                 self.assertLessEqual(len(row.split('\t')[1]), 50)
-        self.assertIn('Super+Alt+Return opens a new browser window here', result.stderr)
+        self.assertIn('Super+Alt+B opens a new browser window here', result.stderr)
         self.assertEqual(self.backups()[0].read_text(), ORIGINAL)
         self.cfg['choices'] = ['Remove']
         self.run_setup('--remove')
@@ -535,11 +535,12 @@ class SetupTests(unittest.TestCase):
             'o.bind("SUPER + CTRL + RETURN", "Another application", "terminal-app")\n'
             'o.bind("SUPER + SHIFT + B", "Browser", "browser")\n'
             'o.bind("SUPER + SHIFT + RETURN", "Browser", "browser")\n')
-        for choice, key in (('Alternative', 'SUPER + CTRL + SHIFT + RETURN'),
+        for choice, key in (('Alternative', 'SUPER + ALT + W'),
                             ('Pick', 'SUPER + F8'), ('Skip', None)):
             with self.subTest(choice=choice):
                 self.bindings.write_text(ORIGINAL)
-                self.cfg = {'choices': ['Add a "new browser window here" shortcut', choice, 'Yes'],
+                self.cfg = {'binds': [bind(72, 'B')],
+                            'choices': ['Add a "new browser window here" shortcut', choice, 'Yes'],
                             'inputs': ['SUPER + F8']}
                 self.run_setup()
                 text = self.bindings.read_text()
@@ -549,9 +550,69 @@ class SetupTests(unittest.TestCase):
                     self.assertNotIn(' browser")', text)
                 self.assertNotIn('o.bind("SUPER + SHIFT + RETURN"', text)
 
+    def test_browser_default_with_stock_defaults_needs_no_conflict_menu(self):
+        self.support_browser()
+        (self.stock / 'applications.lua').write_text(
+            'o.bind("SUPER + ALT + RETURN", "Tmux", "terminal-tmux")\n'
+            'o.bind("SUPER + CTRL + RETURN", "Another application", "terminal-app")\n'
+            'o.bind("SUPER + SHIFT + RETURN", "Browser", "browser")\n'
+            'o.bind("SUPER + SHIFT + B", "Browser", "browser")\n'
+            'o.bind("SUPER + CTRL + B", "Bluetooth", "bluetooth")\n')
+        self.cfg['choices'] = ['Add a "new browser window here" shortcut', 'Yes']
+        self.run_setup()
+        menus = self.events('omarchy-menu-select')
+        self.assertEqual([menu[0] for menu in menus],
+                         ['Browser windows can jump back to where the browser was first opened',
+                          'Add Taskspaces shortcuts?'])
+        self.assertIn('\tSuper+Alt+B', menus[0][1])
+        self.assertIn('o.bind("SUPER + ALT + B", "New browser window here"', self.bindings.read_text())
+
+    def test_browser_alternatives_are_ordered_and_stop_after_two(self):
+        self.support_browser()
+        for taken, expected in (([bind(72, 'B')], 'SUPER + ALT + W'),
+                                ([bind(72, 'B'), bind(72, 'W')], 'SUPER + ALT + C'),
+                                ([bind(72, 'B'), bind(72, 'W'), bind(72, 'C')], None)):
+            with self.subTest(expected=expected):
+                self.bindings.write_text(ORIGINAL)
+                self.cfg = {'binds': taken,
+                            'choices': ['Add a "new browser window here" shortcut',
+                                        'Alternative' if expected else 'Skip', 'Yes']}
+                self.run_setup()
+                if expected:
+                    self.assertIn('o.bind("' + expected + '", "New browser window here"', self.bindings.read_text())
+                else:
+                    self.assertNotIn(' browser")', self.bindings.read_text())
+                    menu = self.events('omarchy-menu-select')[-2]
+                    self.assertFalse(any('Use ' in row for row in menu[1:]))
+
+    def test_browser_keys_are_free_in_installed_stock_bindings(self):
+        folder = Path('/usr/share/omarchy/default/hypr/bindings')
+        files = sorted(folder.glob('*.lua'))
+        if not files:
+            self.skipTest('Omarchy stock bindings are not installed')
+        for file in files:
+            (self.stock / file.name).write_bytes(file.read_bytes())
+        self.support_browser()
+        # Only the browser step: unrelated future stock changes to the three
+        # core defaults must not obscure whether these browser keys are free.
+        core = ORIGINAL + START + '\n' + MANUAL + END + '\n'
+        self.bindings.write_text(core)
+        for taken, expected in (([], 'SUPER + ALT + B'),
+                                ([bind(72, 'B')], 'SUPER + ALT + W'),
+                                ([bind(72, 'B'), bind(72, 'W')], 'SUPER + ALT + C')):
+            with self.subTest(expected=expected):
+                (self.root / 'events.jsonl').unlink(missing_ok=True)
+                self.cfg = {'binds': taken,
+                            'choices': ['Add a "new browser window here" shortcut'] +
+                                       (['Alternative'] if taken else []) + ['Yes']}
+                result = self.run_setup('--dry-run')
+                self.assertIn('o.bind("' + expected + '", "New browser window here"', result.stdout)
+                self.assertEqual(len(self.events('omarchy-menu-select')), 3 if taken else 2)
+                self.unchanged(core)
+
     def test_browser_live_conflict_rejects_taken_custom_key(self):
         self.support_browser()
-        self.cfg = {'binds': [bind(72, 'Return'), bind(64, 'F8')],
+        self.cfg = {'binds': [bind(72, 'B'), bind(64, 'F8')],
                     'choices': ['Add a "new browser window here" shortcut', 'Pick', 'Yes'],
                     'inputs': ['SUPER + N', 'SUPER + F8', 'SUPER + F9']}
         self.run_setup()
@@ -564,12 +625,12 @@ class SetupTests(unittest.TestCase):
         self.support_browser()
         self.cfg['choices'] = ['Add a "new browser window here" shortcut', 'Yes']
         self.run_setup()
-        expected = core.replace(END, 'o.bind("SUPER + ALT + RETURN", "New browser window here", taskspaces_bin .. " browser")\n' + END)
+        expected = core.replace(END, 'o.bind("SUPER + ALT + B", "New browser window here", taskspaces_bin .. " browser")\n' + END)
         self.assertEqual(self.bindings.read_text(), expected)
         self.assertEqual(self.backups()[0].read_text(), core)
         menus = self.events('omarchy-menu-select')
         self.assertEqual(len(menus), 2)
-        self.assertIn('Super+Alt+Return browser', menus[1][1])
+        self.assertIn('Super+Alt+B browser', menus[1][1])
         self.assertNotIn('Super+N send', menus[1][1])
         self.assertEqual(self.cfg['reload_files'], [expected])
 
@@ -577,7 +638,7 @@ class SetupTests(unittest.TestCase):
         core = self.core_block()
         self.support_browser()
         for choices, live in ((['Not now'], []),
-                              (['Add a "new browser window here" shortcut', 'Skip'], [bind(72, 'Return')])):
+                              (['Add a "new browser window here" shortcut', 'Skip'], [bind(72, 'B')])):
             self.cfg = {'choices': choices, 'binds': live}
             self.run_setup()
             self.unchanged(core)
@@ -625,7 +686,7 @@ class SetupTests(unittest.TestCase):
     def test_browser_key_taken_during_final_consent_changes_nothing(self):
         self.support_browser()
         self.cfg = {'choices': ['Add a "new browser window here" shortcut', 'Yes'],
-                    'take_on_menu': bind(72, 'Return')}
+                    'take_on_menu': bind(72, 'B')}
         result = self.run_setup(expected=1)
         self.assertIn('just taken', result.stderr)
         self.unchanged()
