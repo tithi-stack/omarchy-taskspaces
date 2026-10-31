@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install shellcheck and jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck jq
+      - name: Lint bin/taskhop
+        run: shellcheck bin/taskhop
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests
+      - name: Dry-run check
+        run: python3 tests/check_dry_run.py
+      - name: Validate manifest.json
+        run: jq empty manifest.json
