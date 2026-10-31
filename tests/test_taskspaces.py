@@ -11,7 +11,7 @@ import tempfile
 import unittest
 
 HERE = Path(__file__).resolve().parent
-SCRIPT = HERE.parent / 'bin' / 'taskhop'
+SCRIPT = HERE.parent / 'bin' / 'taskspaces'
 BASH = shutil.which('bash')
 REQUIRED = ('hyprctl', 'jq', 'python3', 'flock', 'omarchy-menu-select', 'omarchy-menu-input')
 TOOLS = ('chmod', 'date', 'mkdir', 'mv', 'rm')
@@ -53,7 +53,7 @@ elif cmd == 'omarchy-menu-select':
 elif cmd == 'omarchy-menu-input':
     cfg.update(cfg.get('input_updates', {}))
     if cfg.get('input_state'):
-        state = root / 'runtime' / 'taskhop' / '2.json'
+        state = root / 'runtime' / 'taskspaces' / '2.json'
         state.write_text(json.dumps(cfg['input_state']))
     save()
     if cfg.get('input_cancel'): sys.exit(1)
@@ -64,12 +64,12 @@ elif cmd not in ('omarchy-notification-send', 'notify-send'): raise RuntimeError
 
 class TaskTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix='taskhop-test-')
+        self.tmp = tempfile.TemporaryDirectory(prefix='taskspaces-test-')
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.runtime = self.root / 'runtime'
         self.runtime.mkdir()
-        self.state = self.runtime / 'taskhop'
+        self.state = self.runtime / 'taskspaces'
         self.state.mkdir()
         self.mock = self.root / 'mock'
         self.mock.write_text(MOCK)
@@ -292,7 +292,7 @@ class TaskTests(unittest.TestCase):
         self.assertIn('◆\tSend to: Planning\tws 2', self.menu())
 
     def test_lock_contention_changes_nothing(self):
-        with (self.runtime / 'taskhop.lock').open('w') as lock:
+        with (self.runtime / 'taskspaces.lock').open('w') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.run_task('send')
         self.assertEqual(self.events(), [])
@@ -326,7 +326,7 @@ class TaskTests(unittest.TestCase):
         self.assertIn('hyprctl dispatch hl.dsp.window.move', result.stdout)
         self.assertEqual(self.dispatches(), [])
         self.assertFalse(self.state.exists())
-        self.assertFalse((self.runtime / 'taskhop.lock').exists())
+        self.assertFalse((self.runtime / 'taskspaces.lock').exists())
         self.assertEqual(self.events('omarchy-menu-select'), [])
         self.assertEqual(self.events('omarchy-menu-input'), [])
         self.assertEqual(self.events('omarchy-notification-send'), [])
@@ -338,11 +338,11 @@ class TaskTests(unittest.TestCase):
         self.assertNotIn('hl.dsp.focus', result.stdout)
         self.assertEqual(self.dispatches(), [])
         self.assertEqual(json.loads((self.state / '2.json').read_text()), record)
-        self.assertFalse((self.runtime / 'taskhop.lock').exists())
+        self.assertFalse((self.runtime / 'taskspaces.lock').exists())
         self.assertEqual(self.events('omarchy-menu-select'), [])
 
     def test_adopt_helper_dry_run_prints_rename_without_writing_state(self):
-        result = self.run_task(code='source "$1"; dry=true; state_dir="$XDG_RUNTIME_DIR/taskhop"; make_workspace_task 2 kitty')
+        result = self.run_task(code='source "$1"; dry=true; state_dir="$XDG_RUNTIME_DIR/taskspaces"; make_workspace_task 2 kitty')
         self.assertIn('workspace.rename', result.stdout)
         self.assertNotIn('window.move', result.stdout)
         self.assert_no_effect()
@@ -354,14 +354,14 @@ class TaskTests(unittest.TestCase):
 
     def test_help_lists_commands_and_exits_zero(self):
         result = self.run_task('--help')
-        for text in ('Usage: taskhop send', 'taskhop finish', '--silent', '--version'):
+        for text in ('Usage: taskspaces send', 'taskspaces finish', '--silent', '--version'):
             self.assertIn(text, result.stdout)
         self.assertEqual(result.stderr, '')
 
     def test_help_and_version_need_no_dependencies(self):
         env = dict(self.env, PATH=self.isolated_path('no-tools', []))
         self.assertEqual(self.run_task('--version', env=env).stdout, '0.1.0\n')
-        self.assertIn('Usage: taskhop', self.run_task('--help', env=env).stdout)
+        self.assertIn('Usage: taskspaces', self.run_task('--help', env=env).stdout)
 
     def test_missing_dependency_is_named_in_one_line(self):
         for missing in REQUIRED:
@@ -369,7 +369,7 @@ class TaskTests(unittest.TestCase):
                 commands = [command for command in REQUIRED if command != missing]
                 env = dict(self.env, PATH=self.isolated_path(f'without-{missing}', commands))
                 result = self.run_task('send', env=env, expected=1)
-                self.assertEqual(result.stderr, f'taskhop: Missing required command: {missing}\n')
+                self.assertEqual(result.stderr, f'taskspaces: Missing required command: {missing}\n')
                 self.assertEqual(result.stdout, '')
                 self.assertEqual(self.events(), [])
 
@@ -383,19 +383,19 @@ class TaskTests(unittest.TestCase):
         self.cfg['dispatch_error'] = True
         env = dict(self.env, PATH=self.isolated_path('no-notifier', REQUIRED + TOOLS))
         result = self.run_task('send', env=env, expected=1)
-        self.assertIn('taskhop: Dispatch failed: mock dispatcher failure\n', result.stderr)
+        self.assertIn('taskspaces: Dispatch failed: mock dispatcher failure\n', result.stderr)
 
     def test_notify_send_is_used_when_omarchy_helper_is_missing(self):
         env = dict(self.env, PATH=self.isolated_path('notify-send-only', REQUIRED + TOOLS + ('notify-send',)))
         self.run_task('send', env=env)
         self.assertEqual(self.events('omarchy-notification-send'), [])
         sent = self.events('notify-send')
-        self.assertEqual(sent[-1][0], 'taskhop')
+        self.assertEqual(sent[-1][0], 'taskspaces')
         self.assertIn('workspace 2', sent[-1][1])
 
-    def test_notifications_use_taskhop_title(self):
+    def test_notifications_use_taskspaces_title(self):
         self.run_task('send')
-        self.assertEqual(self.events('omarchy-notification-send')[-1][:3], ['-g', '◆', 'taskhop'])
+        self.assertEqual(self.events('omarchy-notification-send')[-1][:3], ['-g', '◆', 'taskspaces'])
 
 
 if __name__ == '__main__':
