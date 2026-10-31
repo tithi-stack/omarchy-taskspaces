@@ -6,6 +6,18 @@ Turn the window you're in into a task: one key to start, one key to finish.
 
 <!-- Preview: add a screenshot or short GIF here once one exists. -->
 
+## The problem
+
+Unrelated tasks pile up in one set of workspaces, and an urgent task interrupts the one you are in. Fixed app-to-workspace assignments do not fit, because a task is not tied to an app: one email window can belong to one task, and the next email window to another.
+
+## The idea
+
+- **The workspace follows the task.** Sending the first window creates the task's workspace. Finishing removes the task's record, and Hyprland drops the workspace once it is empty (not tested here).
+- **Nothing to maintain.** You never pick a workspace number, keep notes, or remember a shortcut per workspace. Three keys cover send, silent send, and finish.
+- **Send.** The first menu row is the suggested name, taken from the window title. Enter accepts it.
+- **Finish.** Each window gets a normal close request, so an app's own unsaved-changes prompt can still appear (not tested here). Nothing is force-killed. Focus returns to the workspace the task came from.
+- **Open windows.** If a window stays open, the task is not marked finished, and you get a notification.
+
 ## What it does
 
 - **Send:** `SUPER + N` moves the focused window to a named task workspace. The name is suggested from the window title.
@@ -16,7 +28,7 @@ The keys are suggestions. You choose them in [Bindings](#bindings).
 
 ## How it differs
 
-Each part of this idea exists in other projects. taskhop adds the combination: one key sends a window to a task named from its title, a silent variant, and a finish that closes or returns the windows. Numbered workspaces keep their names and bindings, except that a task takes one number (see [Workspace numbers](docs/how-it-works.md#workspace-numbers)).
+Parts of this exist in other projects. Some tools give you places to organize windows, such as pre-declared workspaces or bar switchers. Another is a heavier task manager. taskhop's difference is the lifecycle: the workspace is made for a task and finished with it. Numbered workspaces keep their names and bindings, except that a task takes one number (see [Workspace numbers](docs/how-it-works.md#workspace-numbers)).
 
 - **[jsimonrichard/hypr-taskspace](https://github.com/jsimonrichard/hypr-taskspace)** is a heavier task manager. Each task gets its own named workspaces. It can use git worktrees for linked repos, runs a systemd user daemon (`tskd`), and opens a control overlay on `SUPER + Tab`. Choose it if you want that model.
 - **[tornikegomareli/omarchy-spaces](https://github.com/tornikegomareli/omarchy-spaces)** is a different tool: a bar workspace switcher that shows the apps open on each workspace. Its README describes switching and previews, not sending windows to tasks.
@@ -97,13 +109,13 @@ The keys are suggestions. If you have already remapped `SUPER + N`, `SUPER + ALT
 
 ## Usage
 
-1. Focus the window you want to move. For example, a VS Code window titled `Fix login bug - Visual Studio Code`.
+1. Focus the window you want to move. For example, an email window titled `Reply to the team - Mail`.
 2. Press `SUPER + N`. A menu opens.
-3. Choose **New task: Fix login bug**, or **New task, type a name…** to enter your own. Press Enter.
-4. The window moves to a new workspace named after the task, and you follow it. A notification says `Task "Fix login bug" → workspace N`.
-5. Work in the task. The bar shows `◆ Fix login bug`.
+3. The first row, **New task: Reply to the team**, is the suggested name. Press Enter to accept it, or choose **New task, type a name…** to enter your own.
+4. The window moves to a new workspace named after the task, and you follow it. A notification says `Task "Reply to the team" → workspace N`.
+5. Work in the task. The bar shows `◆ Reply to the team`.
 6. Press `SUPER + D` to finish. If the task still has windows, a menu offers **Close N windows and finish**, **Move windows to ws N and finish** (or **Keep windows here and finish** for a task made from a numbered workspace), or **Cancel**.
-7. Choose one. A window that stays open, for example because an app asks you to save, keeps the task. taskhop stops waiting after 30 seconds and notifies you of what is still open.
+7. Choose one. A window that stays open, for example because an app asks you to save, keeps the task. taskhop stops waiting after 30 seconds and notifies you, naming up to three windows that are still open.
 
 To send without following, press `SUPER + ALT + N` in step 2. The full menu rows and naming rules are in [How taskhop works](docs/how-it-works.md).
 
