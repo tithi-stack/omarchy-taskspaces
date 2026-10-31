@@ -1,0 +1,384 @@
+#!/bin/bash
+# taskhop: send the focused window to a named task workspace, or finish a task.
+# Needs Hyprland, jq, python3, flock and Omarchy's menu helpers at runtime.
+set -euo pipefail
+
+version=0.1.0
+
+# Keep naming pure so it can be tested without a compositor.
+name_value() {
+  python3 -I - "$@" <<'PY'
+import re, sys, unicodedata
+mode, cls, title = sys.argv[1:]
+labels = {'google-chrome': 'Chrome', 'libreoffice-calc': 'Calc',
+          'libreoffice-writer': 'Writer', 'org.gnome.Nautilus': 'Files',
+          'com.mitchellh.ghostty': 'Terminal', 'Alacritty': 'Terminal',
+          'kitty': 'Terminal', 'code': 'VS Code'}
+label = labels.get(cls, cls.rsplit('.', 1)[-1].capitalize() or 'App')
+if mode == 'label':
+    print(label)
+    sys.exit()
+text = title
+if mode == 'suggest':
+    text = re.sub(r' - (?:Google Chrome|Chromium|LibreOffice (?:Calc|Writer|Impress|Draw)|Omawrite|Visual Studio Code)$', '', text)
+    text = re.sub(r'^\(\d+\)\s*', '', text)
+    text = re.sub(r'^\*\s*', '', text)
+    text = re.sub(r'https?://\S+|[\w.+-]+@[\w.-]+\.[\w-]+|[A-Za-z0-9_-]{20,}|\d{10,}', '', text)
+if mode == 'suggest':
+    text = next((s.strip() for s in re.split(r' (?:-|—|–|·|\|) ', text) if s.strip()), '')
+    text = re.sub(r'\s+\(\d+\)$', '', text)
+    text = text.lstrip()
+    while text and not text[0].isalnum():
+        text = text[1:]
+    if cls.startswith('libreoffice-'):
+        text = re.sub(r'\.[A-Za-z0-9]{1,8}$', '', text)
+text = ''.join(c for c in text if c not in '"\\[]{}<>$`' and not unicodedata.category(c).startswith('C'))
+text = ' '.join(text.split())
+if len(text) > 40:
+    prefix = text[:39]
+    if not text[39].isspace() and ' ' in prefix:
+        prefix = prefix.rsplit(' ', 1)[0]
+    text = prefix.rstrip() + '…'
+if mode == 'suggest' and (not text or re.fullmatch(r'New Tab|Untitled.*|Loading.*', text, re.I) or text.casefold() in {label.casefold(), cls.casefold(), 'google chrome', 'chromium', 'libreoffice ' + label.casefold()}):
+    text = label + ' task'
+print(text)
+PY
+}
+
+suggest_name() { name_value suggest "$1" "$2"; }
+lua_string() {
+  local value=$1
+  value=${value//\\/\\\\}
+  value=${value//\"/\\\"}
+  printf '"%s"' "$value"
+}
+notify() {
+  if $dry; then printf 'Notification: %s\n' "$*"; else
+    if command -v omarchy-notification-send >/dev/null; then
+      omarchy-notification-send -g '◆' 'taskhop' "$*" >/dev/null || true
+    elif command -v notify-send >/dev/null; then
+      notify-send 'taskhop' "$*" || true
+    else
+      printf 'taskhop: %s\n' "$*" >&2
+    fi
+  fi
+}
+require_commands() {
+  local tool missing=()
+  for tool in hyprctl jq python3 flock omarchy-menu-select omarchy-menu-input; do
+    command -v "$tool" >/dev/null || missing+=("$tool")
+  done
+  if (( ${#missing[@]} > 0 )); then
+    notify "Missing required command: ${missing[*]}"
+    return 1
+  fi
+}
+dispatch() {
+  if $dry; then printf 'hyprctl dispatch %q\n' "$1"; else
+    local result
+    if ! result=$(hyprctl dispatch "$1") || [[ $result != ok ]]; then
+      printf 'Dispatcher failed: %s\n%s\n' "$1" "$result" >&2
+      notify "Dispatch failed: ${result:-no reply from Hyprland}"
+      return 1
+    fi
+  fi
+}
+move_window() {
+  dispatch "hl.dsp.window.move({ window = $(lua_string "address:$1"), workspace = $(lua_string "$2"), follow = $3 })"
+}
+prune() {
+  local file record
+  tasks='[]'
+  shopt -s nullglob
+  for file in "$state_dir"/*.json; do
+    if record=$(jq -ce --argjson workspaces "$workspaces" '
+      . as $task | select((.id | type) == "number" and .id > 0
+        and (.source | type) == "number" and (.name | type) == "string")
+      | select(any($workspaces[]; .id == $task.id and .name == $task.name))' "$file"); then
+      [[ $(basename "$file") == "$(jq -r .id <<< "$record").json" ]] || continue
+      tasks=$(jq -c --argjson task "$record" '. + [$task]' <<< "$tasks")
+    elif $dry; then printf 'Would prune: %s\n' "$file"; else rm -- "$file"; fi
+  done
+}
+dedupe() {
+  local base=$1 name=$1 suffix=2
+  while jq -e --arg name "$name" 'any(.[]; .name == $name)' <<< "$workspaces" >/dev/null; do
+    name="$base $suffix"
+    suffix=$((suffix + 1))
+  done
+  printf '%s\n' "$name"
+}
+rename_task() {
+  local source=$1 cls=$2 record=$3 name workspaces pending
+  name=$(omarchy-menu-input 'Task name') || return 0
+  [[ -n ${name//[[:space:]]/} ]] || return 0
+  name=$(name_value sanitize "$cls" "$name")
+  [[ -n $name ]] || return 0
+  # Recheck the captured workspace after input; ignore its own name in dedupe.
+  workspaces=$(hyprctl workspaces -j)
+  jq -e --argjson id "$source" --arg name "$(jq -r .name <<< "$record")" \
+    'any(.[]; .id == $id and .name == $name)' <<< "$workspaces" >/dev/null || return 0
+  workspaces=$(jq -c --argjson id "$source" '[.[] | select(.id != $id)]' <<< "$workspaces")
+  name=$(dedupe "$name")
+  if ! $dry; then
+    pending="$state_dir/$source.json.tmp"
+    jq --arg name "$name" '.name = $name' "$state_dir/$source.json" > "$pending"
+  fi
+  if ! dispatch "hl.dsp.workspace.rename({ workspace = $(lua_string "$source"), name = $(lua_string "$name") })"; then
+    if ! $dry; then rm -- "$pending"; fi
+    return 1
+  fi
+  if ! $dry; then mv -- "$pending" "$state_dir/$source.json"; fi
+  notify "Renamed task: $name"
+}
+first_free() {
+  jq -r '[.[] | .id | select(. > 0)] as $used | first(range(1; ($used | length) + 2) | select(. as $id | $used | index($id) | not))' <<< "$workspaces"
+}
+make_workspace_task() {
+  local source=$1 cls=$2 name workspaces pending
+  name=$(omarchy-menu-input 'Task name') || return 0
+  [[ -n ${name//[[:space:]]/} ]] || return 0
+  name=$(name_value sanitize "$cls" "$name")
+  [[ -n $name ]] || return 0
+  # The existing lock covers the menu and this recheck of the captured workspace.
+  workspaces=$(hyprctl workspaces -j)
+  jq -e --argjson id "$source" \
+    'any(.[]; .id == $id and .id > 0 and .name == ($id | tostring))' <<< "$workspaces" >/dev/null || return 0
+  [[ ! -e $state_dir/$source.json ]] || return 0
+  name=$(dedupe "$name")
+  if ! $dry; then
+    pending="$state_dir/$source.json.tmp"
+    jq -n --argjson id "$source" --arg name "$name" --argjson created "$(date +%s)" \
+      '{id:$id, name:$name, source:$id, created:$created}' > "$pending"
+  fi
+  if ! dispatch "hl.dsp.workspace.rename({ workspace = $(lua_string "$source"), name = $(lua_string "$name") })"; then
+    if ! $dry; then rm -- "$pending"; fi
+    return 1
+  fi
+  if ! $dry; then mv -- "$pending" "$state_dir/$source.json"; fi
+  notify "Task \"$name\" → workspace $source"
+}
+send_task() {
+  local window address cls title source suggested selection target name row record plain_workspaces plain_target=false
+  if [[ -n $requested_address ]]; then
+    window=$(hyprctl clients -j | jq -c --arg address "$requested_address" 'first(.[] | select(.address == $address and .mapped != false)) // {}')
+  else window=$(hyprctl activewindow -j); fi
+  address=$(jq -r '.address // empty' <<< "$window")
+  if [[ ! $address =~ ^0x[0-9a-fA-F]+$ ]]; then notify 'No window focused'; return; fi
+  cls=$(jq -r '.class // ""' <<< "$window")
+  title=$(jq -r '.title // ""' <<< "$window")
+  source=$(jq -er '.workspace.id | select(type == "number")' <<< "$window")
+  workspaces=$(hyprctl workspaces -j)
+  prune
+  suggested=$(dedupe "$(suggest_name "$cls" "$title")")
+  local first="New task: $suggested" typed='New task, type a name…' rename='Rename this task…'
+  local adopt="Make workspace $source a task…" can_adopt=false
+  local -a rows=("$(printf '➕\t%s' "$first")" "$(printf '➕\t%s' "$typed")")
+  [[ $cls != google-chrome ]] || rows[0]+=$'\twhole window (all tabs)'
+  local source_record
+  source_record=$(jq -c --argjson source "$source" 'first(.[] | select(.id == $source)) // empty' <<< "$tasks")
+  [[ -z $source_record ]] || rows+=("$(printf '✎\t%s' "$rename")")
+  if [[ -z $source_record && ! -e $state_dir/$source.json ]] && jq -e --argjson id "$source" \
+    'any(.[]; .id == $id and .id > 0 and .name == ($id | tostring))' <<< "$workspaces" >/dev/null; then
+    can_adopt=true
+    rows+=("$(printf '✎\t%s' "$adopt")")
+  fi
+  while IFS= read -r record; do
+    rows+=("$(jq -r '"◆\tSend to: " + .name + "\tws " + (.id | tostring)' <<< "$record")")
+  done < <(jq -c --argjson source "$source" 'sort_by(.id)[] | select(.id != $source)' <<< "$tasks")
+  plain_workspaces=$(jq -c --argjson tasks "$tasks" --argjson source "$source" '
+    [.[] | select(.id > 0 and .id != $source)
+      | select(.id as $id | any($tasks[]; .id == $id) | not)] | sort_by(.id)' <<< "$workspaces")
+  while IFS= read -r record; do
+    rows+=("$(jq -r '"↪\tMove to: " + .name + "\tws " + (.id | tostring)' <<< "$record")")
+  done < <(jq -c '.[]' <<< "$plain_workspaces")
+  if $dry; then selection=$first; else
+    selection=$(omarchy-menu-select 'Task' "${rows[@]}" -- --width 600) || return 0
+  fi
+  row=${selection%%$'\t'*}
+  if [[ $selection == "$rename" && -n $source_record ]]; then
+    rename_task "$source" "$cls" "$source_record"
+    return
+  fi
+  if [[ $selection == "$adopt" ]] && $can_adopt; then
+    make_workspace_task "$source" "$cls"
+    return
+  fi
+  if [[ $row == "$first" || $row == "$typed" ]]; then
+    name=$suggested
+    if [[ $row == "$typed" ]]; then
+      name=$(omarchy-menu-input 'Task name') || return 0
+      [[ -n ${name//[[:space:]]/} ]] || return 0
+      name=$(name_value sanitize "$cls" "$name")
+      [[ -n $name ]] || return 0
+    fi
+    # A workspace may have appeared while the menu was open.
+    workspaces=$(hyprctl workspaces -j)
+    name=$(dedupe "$name")
+    target=$(first_free)
+    printf 'Target workspace: %s; name: %s; source: %s; address: %s\n' "$target" "$name" "$source" "$address"
+    move_window "$address" "$target" "$follow"
+    dispatch "hl.dsp.workspace.rename({ workspace = $(lua_string "$target"), name = $(lua_string "$name") })"
+    if ! $dry; then
+      jq -n --argjson id "$target" --arg name "$name" --argjson source "$source" --argjson created "$(date +%s)" \
+        '{id:$id, name:$name, source:$source, created:$created}' > "$state_dir/$target.json"
+    fi
+  else
+    # Match the whole returned row; never trust arbitrary menu text as Lua.
+    target=''
+    while IFS= read -r record; do
+      if [[ $selection == "$(jq -r '"Send to: " + .name + "\tws " + (.id | tostring)' <<< "$record")" ]]; then
+        target=$(jq -r .id <<< "$record")
+        name=$(jq -r .name <<< "$record")
+        break
+      fi
+    done < <(jq -c --argjson source "$source" '.[] | select(.id != $source)' <<< "$tasks")
+    if [[ -z $target ]]; then
+      while IFS= read -r record; do
+        if [[ $selection == "$(jq -r '"Move to: " + .name + "\tws " + (.id | tostring)' <<< "$record")" ]]; then
+          target=$(jq -r .id <<< "$record")
+          name=$(jq -r .name <<< "$record")
+          plain_target=true
+          break
+        fi
+      done < <(jq -c '.[]' <<< "$plain_workspaces")
+    fi
+    [[ -n $target ]] || return 0
+    workspaces=$(hyprctl workspaces -j)
+    jq -e --argjson id "$target" --arg name "$name" 'any(.[]; .id == $id and .name == $name)' <<< "$workspaces" >/dev/null || return 0
+    move_window "$address" "$target" "$follow"
+  fi
+  if $plain_target; then notify "Moved to workspace $target"; else notify "Task \"$name\" → workspace $target"; fi
+}
+finish_success() {
+  local target
+  workspaces=$(hyprctl workspaces -j)
+  if [[ $source == "$id" ]]; then
+    # In-place tasks keep their windows and focus; restore the numbered label.
+    if jq -e --argjson id "$id" 'any(.[]; .id == $id)' <<< "$workspaces" >/dev/null; then
+      dispatch "hl.dsp.workspace.rename({ workspace = $(lua_string "$id"), name = $(lua_string "$id") })"
+    fi
+    if ! $dry; then rm -- "$state_dir/$id.json"; fi
+    notify "Finished: $name"
+    return
+  fi
+  target=$(jq -r --argjson source "$source" --argjson id "$id" '
+    if any(.[]; .id == $source and .id != $id) then $source
+    else ([.[] | .id | select(. > 0 and . != $id)] | min // 1) end' <<< "$workspaces")
+  # Preserve the record if focusing the return workspace fails.
+  dispatch "hl.dsp.focus({ workspace = $(lua_string "$target") })"
+  if ! $dry; then rm -- "$state_dir/$id.json"; fi
+  notify "Finished: $name"
+}
+finish_task() {
+  local workspace id name source record wins count summary selection address live remaining extra now start changed previous
+  workspace=$(hyprctl activeworkspace -j)
+  id=$(jq -er '.id | select(type == "number")' <<< "$workspace")
+  workspaces=$(hyprctl workspaces -j)
+  prune
+  record=$(jq -c --argjson id "$id" 'first(.[] | select(.id == $id)) // empty' <<< "$tasks")
+  if [[ -z $record ]]; then notify "This workspace isn't a task"; return; fi
+  name=$(jq -r .name <<< "$record")
+  source=$(jq -r .source <<< "$record")
+  wins=$(hyprctl clients -j | jq -c --argjson id "$id" '[.[] | select(.workspace.id == $id and .mapped != false) | {address, class, title}]')
+  count=$(jq length <<< "$wins")
+  if (( count == 0 )); then finish_success; return; fi
+  summary=$(python3 -I - "$wins" <<'PY'
+import collections, json, sys
+labels = {'google-chrome':'Chrome', 'libreoffice-calc':'Calc', 'libreoffice-writer':'Writer', 'org.gnome.Nautilus':'Files', 'com.mitchellh.ghostty':'Terminal', 'Alacritty':'Terminal', 'kitty':'Terminal', 'code':'VS Code'}
+items = []
+for w in json.loads(sys.argv[1]):
+    cls = w['class'] or ''
+    label = labels.get(cls, cls.rsplit('.', 1)[-1].capitalize() or 'App')
+    if cls.startswith('libreoffice-'):
+        label += ' (' + (w['title'] or '').split(' - LibreOffice', 1)[0].lstrip('* ') + ')'
+    items.append(' '.join(label.split()))
+print(', '.join(k + (' ×' + str(v) if v > 1 else '') for k, v in collections.Counter(items).items()))
+PY
+  )
+  local close_row="Close $count windows and finish" move_row="Move windows to ws $source and finish"
+  [[ $source != "$id" ]] || move_row='Keep windows here and finish'
+  if $dry; then selection=$close_row; else
+    selection=$(omarchy-menu-select "Finish \"$name\"?" "$(printf '◆\t%s\t%s' "$close_row" "$summary")" "$(printf '↩\t%s' "$move_row")" $'\tCancel' -- --width 600) || return 0
+  fi
+  selection=${selection%%$'\t'*}
+  if [[ $selection == "$move_row" ]]; then
+    if [[ $source != "$id" ]]; then
+      while IFS= read -r address; do move_window "$address" "$source" false; done < <(jq -r '.[].address' <<< "$wins")
+    fi
+    finish_success
+  elif [[ $selection == "$close_row" ]]; then
+    while IFS= read -r address; do
+      [[ $address =~ ^0x[0-9a-fA-F]+$ ]] || return 1
+      dispatch "hl.dsp.window.close({ window = $(lua_string "address:$address") })"
+    done < <(jq -r '.[].address' <<< "$wins")
+    if $dry; then
+      printf 'Would poll recorded addresses every 0.25s (30s cap; 5s stalled without extra dialogs).\n'
+      if [[ $source == "$id" ]]; then
+        printf 'Would retain task if any remain; otherwise restore workspace number, remove %s/%s.json and keep focus.\n' "$state_dir" "$id"
+      else
+        printf 'Would retain task if any remain; otherwise remove %s/%s.json and return.\n' "$state_dir" "$id"
+      fi
+      finish_success
+      return
+    fi
+    start=$SECONDS; changed=$SECONDS; previous=$count
+    while :; do
+      live=$(hyprctl clients -j)
+      remaining=$(jq -c --argjson wins "$wins" '[.[] | select(.address as $a | any($wins[]; .address == $a))]' <<< "$live")
+      count=$(jq length <<< "$remaining")
+      if (( count == 0 )); then finish_success; return; fi
+      now=$SECONDS
+      if (( count < previous )); then changed=$now; previous=$count; fi
+      extra=$(jq --argjson id "$id" --argjson wins "$wins" '[.[] | select(.workspace.id == $id and .mapped != false) | select(.address as $a | any($wins[]; .address == $a) | not)] | length' <<< "$live")
+      if (( now - start >= 30 || (now - changed >= 5 && extra == 0) )); then break; fi
+      sleep 0.25
+    done
+    notify "Not finished: $(jq -r '[.[0:3][] | "\"" + ((.title // .class) | gsub("[\\r\\n\\t]"; " ")) + "\""] | join(", ")' <<< "$remaining") still open"
+  fi
+}
+usage() {
+  printf '%s\n' \
+    'Usage: taskhop send [--silent] [--address 0x…] [--dry-run]' \
+    '       taskhop finish [--dry-run]' \
+    '       taskhop --help | --version'
+}
+show_help() {
+  usage
+  printf '\n'
+  printf '%s\n' \
+    'send             Move the focused window to a task workspace. The menu suggests a name.' \
+    'send --silent    Move the window without switching to its workspace.' \
+    'send --address   Act on the window at this address instead of the focused one.' \
+    'finish           Close or return the windows of the current task.' \
+    '--dry-run        Print the Hyprland commands instead of running them. Changes no state.' \
+    '--version        Print the version.'
+}
+main() {
+  local command='' requested_address='' dry=false follow=true workspaces tasks state_dir
+  while (( $# )); do
+    case $1 in
+      send|finish) [[ -z $command ]] || return 2; command=$1 ;;
+      --dry-run) dry=true ;;
+      --silent) follow=false ;;
+      --address) shift; requested_address=${1:?--address requires an address}; [[ $requested_address =~ ^0x[0-9a-fA-F]+$ ]] || return 2 ;;
+      --help) show_help; return 0 ;;
+      --version) printf '%s\n' "$version"; return 0 ;;
+      *) usage >&2; return 2 ;;
+    esac
+    shift
+  done
+  [[ -n $command ]] || { printf 'Expected send or finish\n' >&2; return 2; }
+  require_commands || return 1
+  state_dir=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is required}/taskhop
+  # Dry runs create no state, lock file, menus, notifications, or dispatches.
+  if ! $dry; then
+    umask 077
+    exec 9>"$XDG_RUNTIME_DIR/taskhop.lock"
+    flock -n 9 || return 0
+    mkdir -p "$state_dir"
+    chmod 700 "$state_dir"
+  fi
+  "${command}_task"
+}
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main "$@"; fi
