@@ -393,9 +393,9 @@ PY
     notify "Not finished: $(jq -r '[.[0:3][] | "\"" + ((.title // .class) | gsub("[\\r\\n\\t]"; " ")) + "\""] | join(", ")' <<< "$remaining") still open"
   fi
 }
-# Setup is separate from task state: it needs no runtime directory or jq.
-setup_task() {
-  command -v python3 >/dev/null || { notify 'Setup needs python3; install it and try again.'; return 1; }
+# Setup and browser windows need no task state, runtime directory or jq.
+desktop_task() {
+  command -v python3 >/dev/null || { notify 'This command needs python3; install it and try again.'; return 1; }
   # Preserve terminal input on fd 3 while Python reads its program from stdin.
   python3 -I - "${BASH_SOURCE[0]}" "$@" 3<&0 <<'PY'
 import collections
@@ -445,6 +445,92 @@ def message(text):
             subprocess.run(args, capture_output=True, timeout=10, check=False)
         except (OSError, subprocess.TimeoutExpired):
             pass
+
+
+def default_browser():
+    # Match omarchy-launch-browser: ask its resolver, then read the first Exec
+    # command in ~/.local, ~/.nix-profile or /usr/share/applications. Never run
+    # the desktop entry's arguments or an Omarchy launcher.
+    browsers = {'chromium': ('Chromium', 'chromium'),
+                'google-chrome-stable': ('Chrome', 'google-chrome'),
+                'brave': ('Brave', 'BraveSoftware/Brave-Browser'),
+                'brave-origin': ('Brave Origin', 'BraveSoftware/Brave-Origin'),
+                'microsoft-edge-stable': ('Edge', 'microsoft-edge')}
+    binary = ''
+    desktop = ''
+    try:
+        result = subprocess.run(['omarchy-cmd-default-browser'], capture_output=True,
+                                text=True, timeout=15, check=False)
+        desktop = result.stdout.strip() if result.returncode == 0 else ''
+        if desktop and '/' not in desktop and '\\' not in desktop:
+            for folder in (Path.home() / '.local', Path.home() / '.nix-profile', Path('/usr')):
+                file = folder / 'share/applications' / desktop
+                try:
+                    match = re.search(r'^Exec=([^ \n]+)', file.read_text(), re.M)
+                except (OSError, UnicodeError):
+                    continue
+                if match:
+                    binary = match[1]
+                    break
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    name = Path(binary).name if binary else desktop.removesuffix('.desktop') or 'your default browser'
+    label, folder = browsers.get(name, (name, None))
+    return binary, label, folder
+
+
+def browser():
+    binary, label, folder = default_browser()
+    if folder is None:
+        raise SetupError('New browser windows are not supported for ' + clean(label) + ' yet.')
+    state_dir = Path(os.environ.get('TASKSPACES_BROWSER_STATE_DIR') or
+                     str(Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / folder))
+    profiles = []
+    def profile_text(value):
+        return ''.join(c for c in value if not unicodedata.category(c).startswith('C')) \
+            if isinstance(value, str) else ''
+    try:
+        data = json.loads((state_dir / 'Local State').read_text())
+        cache = data.get('profile', {}).get('info_cache', {})
+        for directory, info in cache.items():
+            if (not directory or directory in ('.', '..') or '/' in directory or '\\' in directory
+                    or profile_text(directory) != directory or not isinstance(info, dict)
+                    or info.get('is_omitted') is True):
+                continue
+            name = profile_text(info.get('name')) or directory
+            name = name if len(name) <= 50 else name[:49] + '…'
+            profiles.append((name, profile_text(info.get('user_name')), directory))
+    except (OSError, ValueError, AttributeError, UnicodeError):
+        pass
+    if not profiles:
+        raise SetupError('No browser profiles found.')
+    profiles.sort()
+    directory = profiles[0][2]
+    if len(profiles) > 1:
+        if not shutil.which('omarchy-menu-select'):
+            raise SetupError('Choosing a browser profile needs omarchy-menu-select; install it and try again.')
+        counts = collections.Counter((name, email) for name, email, _ in profiles)
+        rows = {}
+        for name, email, directory in profiles:
+            detail = email or 'Local profile'
+            if counts[name, email] > 1:
+                detail += ' · ' + directory
+            rows[name + '\t' + detail] = directory
+        result = subprocess.run(['omarchy-menu-select', label + ' - new window here',
+                                 *('󰀄\t' + row for row in rows), '--', '--width', '600'],
+                                capture_output=True, text=True, check=False)
+        directory = rows.get(result.stdout.rstrip('\n')) if result.returncode == 0 else None
+        if directory is None:
+            return
+    if not shutil.which(binary):
+        raise SetupError('Cannot find ' + label + '; check your default browser installation.')
+    args = [binary, '--profile-directory=' + directory, '--new-window', 'about:blank']
+    if shutil.which('uwsm-app'):
+        args = ['uwsm-app', '--', *args]
+    # Close the helper's pipes and terminal so it returns immediately, even
+    # when this is the first browser process in the session.
+    subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
 
 
 def run(*args):
@@ -647,7 +733,7 @@ def is_helper(bind, helper, action):
 
 
 def setup():
-    remove, dry = sys.argv[2:] == ['--remove'], sys.argv[2:] == ['--dry-run']
+    remove, dry = sys.argv[3:] == ['--remove'], sys.argv[3:] == ['--dry-run']
     helper = Path(sys.argv[1]).resolve()
     bindings_file = Path(os.environ.get('TASKSPACES_BINDINGS_FILE') or
                          str(Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') /
@@ -779,7 +865,10 @@ def setup():
             message('Ready: ' + ', '.join(parts) + '.')
 
 try:
-    setup()
+    if sys.argv[2] == 'browser':
+        browser()
+    else:
+        setup()
 except (SetupError, OSError, UnicodeError) as error:
     message(clean(str(error), 500))
     sys.exit(1)
@@ -790,6 +879,7 @@ usage() {
   printf '%s\n' \
     'Usage: taskspaces send [--silent] [--address 0x…] [--dry-run]' \
     '       taskspaces finish [--dry-run]' \
+    '       taskspaces browser' \
     '       taskspaces setup [--remove | --dry-run]' \
     '       taskspaces --help | --version'
 }
@@ -801,6 +891,7 @@ show_help() {
     'send --silent    Move the window without switching to its workspace.' \
     'send --address   Act on the window at this address instead of the focused one.' \
     'finish           Close or return the windows of the current task.' \
+    'browser          Open a new browser window in the current workspace.' \
     'setup            Offer shortcuts and ask before changing your bindings.' \
     'setup --remove   Back up and remove only shortcuts added by setup.' \
     'setup --dry-run  Ask as usual, then print the block without writing or reloading.' \
@@ -809,10 +900,14 @@ show_help() {
 }
 main() {
   local command='' requested_address='' dry=false follow=true workspaces tasks state_dir
+  if [[ ${1:-} == browser ]]; then
+    (( $# == 1 )) || { usage >&2; return 2; }
+    desktop_task browser; return $?
+  fi
   if [[ ${1:-} == setup ]]; then
     shift
     case $#:${1:-} in
-      0:|1:--remove|1:--dry-run) setup_task "$@"; return $? ;;
+      0:|1:--remove|1:--dry-run) desktop_task setup "$@"; return $? ;;
       *) usage >&2; return 2 ;;
     esac
   fi

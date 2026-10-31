@@ -49,7 +49,7 @@ Taskspaces has no daemon and no overlay. It is one helper script and one bar wid
 
 Check your Omarchy version with `cat /usr/share/omarchy/version`.
 
-Send and finish also need the `XDG_RUNTIME_DIR` variable set. Setup does not. See [Troubleshooting](#troubleshooting).
+Send and finish also need the `XDG_RUNTIME_DIR` variable set. Setup and browser do not. See [Troubleshooting](#troubleshooting).
 
 ## Install
 
@@ -128,6 +128,12 @@ On a numbered workspace, **Turn workspace S into a task…** names the current w
 The menu uses these icons: 󰐗 for the suggested name, 󰏫 for typing or renaming, 󰉗 for naming the current workspace, 󰉒 for sending to another workspace, 󰖭 for Close, 󰐃 for Keep, and 󰁍 for Cancel. The menu uses the Nerd Font icons included with Omarchy. Existing-task and workspace choices spell out `workspace <id>` in grey.
 
 For a task started by moving a window, kept windows return to its starting workspace only if it still has the same name and is not another task. Otherwise they go to workspace 1. If workspace 1 is also in use by a task or has a custom name, Taskspaces uses the lowest unused workspace number. Focus follows the windows. Tasks started from a scratchpad also return to workspace 1, subject to that same safety check.
+
+## Opening more windows in a task
+
+Omarchy's stock browser launcher can hand a request to the running Chromium browser; when given a URL, it also focuses an existing browser window, which can take you back to that window's workspace. `taskspaces browser` requests a fresh window here with an existing profile, offering a profile picker only when there is more than one; it works on any workspace and leaves the stock `Super+Shift+Return` shortcut untouched.
+
+Supported Chromium browsers: Chromium, Google Chrome (`google-chrome-stable`), Brave, Brave Origin, and Microsoft Edge (`microsoft-edge-stable`). Firefox-based browsers, including Firefox and Zen, and other browsers are not supported yet. With no saved profiles, it reports `No browser profiles found.`; open your browser normally first to create one.
 
 ## Uninstall
 

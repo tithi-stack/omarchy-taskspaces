@@ -34,6 +34,14 @@ Verification requires `hyprctl reload` to succeed, no new lines in `hyprctl conf
 
 `taskspaces setup --remove` asks for consent, backs up the file, removes exactly the managed block between its markers, then reloads and verifies that its shortcuts are gone. It preserves surrounding content. With no block it says there is nothing to remove. Hand-pasted bindings are never removed; setup gives their line numbers instead. Damaged or repeated markers stop setup for manual inspection.
 
+## Browser windows
+
+`taskspaces browser` works on any workspace and needs no task record or runtime directory. It asks `omarchy-cmd-default-browser` for the desktop entry, then reads its first `Exec` command from the same application locations as `omarchy-launch-browser`: `~/.local`, `~/.nix-profile`, then `/usr`, each under `share/applications`. It supports exactly Chromium, Google Chrome stable, Brave, Brave Origin, and Microsoft Edge stable.
+
+The command reads `<user-data directory>/Local State` with Python, using `${XDG_CONFIG_HOME:-$HOME/.config}` plus `chromium`, `google-chrome`, `BraveSoftware/Brave-Browser`, `BraveSoftware/Brave-Origin`, or `microsoft-edge`, respectively. `TASKSPACES_BROWSER_STATE_DIR` overrides the user-data directory for tests. It never writes browser files. Profiles marked `is_omitted` are skipped, and names and emails lose control characters. One profile opens directly. Several profiles open a **<Browser> - new window here** menu with the profile name (at most 50 characters), signed-in email or `Local profile` in grey, and the Material Design account glyph 󰀄. Duplicate names and emails include the profile folder in grey. Cancelling launches nothing; missing or unreadable profiles produce `No browser profiles found.` and a non-zero exit. An unsupported default browser gets one notification and a non-zero exit.
+
+It launches `uwsm-app -- <browser> --profile-directory=<folder> --new-window about:blank`, or the browser directly if `uwsm-app` is missing, detached so the helper returns immediately. It never calls Omarchy's browser launcher, handoff helper or focus helper. Omarchy's stock launcher can send a request through a running Chromium browser's singleton socket and, when given a URL, calls its focus helper to focus an existing window. Taskspaces requests an explicit new window and makes no request to focus an existing one. It leaves Omarchy's launcher and stock shortcuts unchanged.
+
 ## Terms
 
 | Term | Meaning |
@@ -110,6 +118,7 @@ With no windows, the task finishes without opening a menu and focus goes to that
 - **Lock:** `$XDG_RUNTIME_DIR/taskspaces.lock` stops two actions from running at once. A second action exits without a message.
 - **Messages:** notifications use `omarchy-notification-send`, or `notify-send` if that is missing. They have the title `taskspaces`. With neither command, messages go to stderr.
 - **Setup files:** only consented setup writes the Lua bindings file, its temporary replacement and state-directory backups. Taskspaces makes no network calls. It runs `hyprctl`, `jq`, `python3`, `flock`, and Omarchy's menu commands, plus a notification command.
+- **Browser files:** browser reads the default browser desktop entry and its profile list read-only, then launches that browser through `uwsm-app` when available. Taskspaces itself makes no network requests; the launched browser retains its normal behavior.
 - **Lifetime:** `XDG_RUNTIME_DIR` is per session, so records do not survive a reboot. This is the usual behavior of `XDG_RUNTIME_DIR`, not something Taskspaces tests.
 
 ## Bar widget
