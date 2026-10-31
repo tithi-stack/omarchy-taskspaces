@@ -116,7 +116,7 @@ The keys are suggestions. If you have already remapped `SUPER + N`, `SUPER + ALT
 3. The first row, **Start task "Reply to the team"**, uses the suggested name. Its grey line says `name suggested from the window title` (with ` · whole window (all tabs)` added for Chrome). Press Enter to accept it, or choose **Start task with my own name…** to enter your own.
 4. The window moves to a new workspace named after the task, and you follow it. A notification says `Task "Reply to the team" → workspace N`.
 5. Work in the task. The bar shows `◆ Reply to the team`.
-6. Press `SUPER + D` to finish. With one window, the menu offers **Close 1 window and finish**, **Send 1 window back to workspace S and finish** (or **Keep 1 window here and finish** for a task made from a numbered workspace), or **Cancel**. `S` is the source workspace number. With more windows, the rows show the count and use `windows`. The send-back and keep-here rows say `nothing is closed` in grey.
+6. Press `SUPER + D` to finish. With one window, the menu offers **Close 1 window and finish**, **Send 1 window back to workspace S and finish** (or **Keep 1 window here and finish** for a task made from a numbered workspace), or **Cancel**. `S` is the number of the workspace where you started the task. With more windows, the rows show the count and use `windows`. The send-back and keep-here rows say `nothing is closed` in grey.
 7. Choose one. A window that stays open, for example because an app asks you to save, keeps the task. Taskspaces stops waiting after 30 seconds and notifies you, naming up to three windows that are still open.
 
 To send without following, press `SUPER + ALT + N` in step 2. The full menu rows and naming rules are in [How Taskspaces works](docs/how-it-works.md).
