@@ -30,7 +30,8 @@ taskhop has no daemon and no overlay. It is one helper script and one bar widget
 | Omarchy Quattro (4.0.0.alpha) | Plugin system and Lua bindings |
 | Hyprland, with `hyprctl` on `PATH` | Moving, renaming, focusing, and closing windows |
 | `jq`, `python3`, `flock`, `bash`, GNU coreutils | Script logic, name rules, and a lock so one action runs at a time |
-| `omarchy-menu-select`, `omarchy-menu-input`, `omarchy-notification-send` | Menus, the name prompt, and notifications. These ship with Omarchy. |
+| `omarchy-menu-select`, `omarchy-menu-input` | Menus and the name prompt. These ship with Omarchy. |
+| `omarchy-notification-send` (preferred) or `notify-send` (fallback) | Notifications. Without either, messages go to stderr. |
 
 Check your Omarchy version with `cat /usr/share/omarchy/version`.
 
@@ -73,6 +74,8 @@ o.bind("SUPER + N", "Send window to task", taskhop_bin .. " send")
 o.bind("SUPER + ALT + N", "Send window to task (stay here)", taskhop_bin .. " send --silent")
 o.bind("SUPER + D", "Finish task", taskhop_bin .. " finish")
 ```
+
+The keys are suggestions. If you have already remapped `SUPER + N`, `SUPER + ALT + N`, or `SUPER + D`, change the keys in the snippet to free ones.
 
 | Keys | Action | Command |
 |---|---|---|
@@ -122,8 +125,10 @@ To send without following, press `SUPER + ALT + N` in step 2. The full menu rows
 - **The key does nothing.** Cause: another taskhop action holds the lock, and the helper exits silently when it cannot get it. Or the bind did not load. Fix: wait a second and press again. If it still does nothing, run `hyprctl configerrors`.
 - **Notification: "No window focused".** Cause: no window had focus when you pressed `SUPER + N`. Fix: focus a window and press it again.
 - **Notification: "This workspace isn't a task".** Cause: `SUPER + D` ran on a plain workspace. Fix: switch to the task workspace, then press `SUPER + D`.
-- **Error text, but no notification.** Cause: helper errors, such as a failed `hyprctl` call, go to stderr, and a keybinding does not show stderr. Fix: run the same command from a terminal to see the message.
-- **`XDG_RUNTIME_DIR is required`.** Cause: the variable is not set in that shell. Fix: run the command from your desktop session.
+- **Notification: "Dispatch failed: <reason>".** Cause: Hyprland rejected a command, or did not reply ("no reply from Hyprland"). Fix: run `hyprctl version`. If that fails, Hyprland is not reachable from this shell. If it works, the reason after the colon is Hyprland's reply to the rejected command.
+- **Notification: "Missing required command: <names>".** Cause: the listed commands are not on `PATH`. Fix: install them, then check each with `command -v <name>`.
+- **No notification appears, and nothing happens.** Cause: neither `omarchy-notification-send` nor `notify-send` is installed, so messages go to stderr, which a keybinding does not show. Fix: run the same command from a terminal to see the message.
+- **`XDG_RUNTIME_DIR is required`, in a terminal only.** Cause: the variable is not set in that shell. Fix: run the command from your desktop session.
 
 ## FAQ
 

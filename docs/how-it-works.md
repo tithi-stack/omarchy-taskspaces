@@ -62,8 +62,9 @@ The suggested name comes from the window title.
 ## Files and state
 
 - **Task records:** one JSON file per task, at `$XDG_RUNTIME_DIR/taskhop/<workspace id>.json`. Each record holds the name, the workspace ID, the source, and the creation time.
-- **Lock:** a lock file in `$XDG_RUNTIME_DIR` stops two actions from running at once.
-- **Nothing else:** taskhop writes no config files and makes no network calls. It runs `hyprctl`, `jq`, `python3`, and Omarchy's menu and notification commands.
+- **Lock:** `$XDG_RUNTIME_DIR/taskhop.lock` stops two actions from running at once. A second action exits without a message.
+- **Messages:** notifications use `omarchy-notification-send`, or `notify-send` if that is missing. They have the title `taskhop`. With neither command, messages go to stderr.
+- **Nothing else:** taskhop writes no config files and makes no network calls. It runs `hyprctl`, `jq`, `python3`, `flock`, and Omarchy's menu commands, plus a notification command.
 - **Lifetime:** `XDG_RUNTIME_DIR` is per session, so records do not survive a reboot. This is the usual behavior of `XDG_RUNTIME_DIR`, not something taskhop tests.
 
 ## Bar widget
