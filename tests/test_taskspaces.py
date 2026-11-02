@@ -425,7 +425,6 @@ class TaskTests(unittest.TestCase):
             'Task',
             '󰐗\tStart task "Planning"\tsuggested from window title · moves this window',
             '󰏫\tStart task with my own name…\ttype a custom name · moves this window',
-            '󰁌\tMove to another workspace…\tpick a plain workspace · moves this window',
             '󰉗\tTurn this workspace into a task…\tname this workspace · windows stay here',
             '--', '--width', '600'])
         self.assertFalse(any(args[0] == 'activeworkspace' for args in self.events('hyprctl')))
@@ -518,7 +517,6 @@ class TaskTests(unittest.TestCase):
             '󰏫\tStart task with my own name…\ttype a custom name · moves this window',
             '󰁌\tSend to "Field Job Posting"\tFiles · moves this window',
             '󰁌\tSend to "Quarterly budget"\tTerminal ×2 · moves this window',
-            '󰁌\tMove to another workspace…\tpick a plain workspace · moves this window',
             '󰉒\tGo to a task…\tswitch tasks · leaves this window here',
             '󰉗\tTurn this workspace into a task…\tname this workspace · windows stay here'])
         self.assert_no_moves()
@@ -530,7 +528,6 @@ class TaskTests(unittest.TestCase):
             'Task',
             '󰐗\tStart task "Planning"\tsuggested from window title · moves this window',
             '󰏫\tStart task with my own name…\ttype a custom name · moves this window',
-            '󰁌\tMove to another workspace…\tpick a plain workspace · moves this window',
             '󰉗\tTurn this workspace into a task…\tname this workspace · windows stay here',
             '--', '--width', '600'])
         self.assert_no_effect()
@@ -546,7 +543,6 @@ class TaskTests(unittest.TestCase):
             '󰐗\tStart task "Planning"\tsuggested from window title · whole window (all tabs) · moves this window',
             '󰏫\tStart task with my own name…\ttype a custom name · moves this window',
             '󰁌\tSend to "Field Job Posting"\tFiles · moves this window',
-            '󰁌\tMove to another workspace…\tpick a plain workspace · moves this window',
             '󰉒\tGo to a task…\tswitch tasks · leaves this window here',
             '󰉗\tTurn this workspace into a task…\tname this workspace · windows stay here',
             '--', '--width', '600'])
@@ -563,7 +559,6 @@ class TaskTests(unittest.TestCase):
             '󰏫\tStart task with my own name…\ttype a custom name · moves this window',
             '󰁌\tSend to "Field Job Posting"\tFiles · moves this window',
             '󰁌\tSend to "Quarterly budget"\tTerminal ×2 · moves this window',
-            '󰁌\tMove to another workspace…\tpick a plain workspace · moves this window',
             '󰉒\tGo to a task…\tswitch tasks · leaves this window here',
             '󰏫\tRename this task…\tchange task name · windows stay here',
             '--', '--width', '600'])
@@ -580,7 +575,6 @@ class TaskTests(unittest.TestCase):
             '󰏫\tStart task with my own name…\ttype a custom name · moves this window',
             '󰁌\tSend to "Field Job Posting"\tFiles · moves this window',
             '󰁌\tSend to "Quarterly budget"\tTerminal ×2 · moves this window',
-            '󰁌\tMove to another workspace…\tpick a plain workspace · moves this window',
             '󰉒\tGo to a task…\tswitch tasks · leaves this window here',
             '--', '--width', '600'])
         self.assert_no_moves()
@@ -609,7 +603,7 @@ class TaskTests(unittest.TestCase):
                          'hl.dsp.workspace.rename({ workspace = "5", name = "Planning" })')
 
     def test_send_task_named_like_action_row_and_empty_summary(self):
-        for name in ('Go to a task…', 'Move to another workspace…',
+        for name in ('Go to a task…',
                      'Start task with my own name…', 'Rename this task…',
                      'Turn this workspace into a task…'):
             with self.subTest(name=name):
@@ -673,149 +667,6 @@ class TaskTests(unittest.TestCase):
             self.run_task('go')
         self.assertEqual(self.dispatches(), [])
         self.assertEqual(self.events('omarchy-notification-send'), [])
-
-    def test_plain_workspaces_second_menu_uses_windows(self):
-        self.cfg['clients'].append(real_window('0xdef', 'org.gnome.Nautilus', 'Folder', 1, '1'))
-        self.cfg['selections'] = ['Move to another workspace…\tpick a plain workspace · moves this window', 'Files\tworkspace 1']
-        self.run_task('send')
-        self.assertEqual(self.menu()[1:-3], ['󰉒\tFiles\tworkspace 1',
-                                               '󰉒\tNo windows\tworkspace 3',
-                                               '󰉒\tNo windows\tworkspace 4',
-                                               '󰉒\tNo windows\tworkspace 5'])
-        self.assertEqual(self.events('omarchy-notification-send')[-1][-1], 'Moved to "Files"')
-        self.assertEqual(self.dispatches(), [
-            'hl.dsp.window.move({ window = "address:0xabc", workspace = "1", follow = true })'])
-
-    def workspace_count_config(self, count):
-        path = self.root / 'config' / 'omarchy' / 'shell.json'
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({'version': 1, 'bar': {'layout': {
-            'left': [{'id': 'omarchy.workspaces', 'persistentWorkspaces': count}]}}}))
-        return path
-
-    def open_move_menu(self, answer='Cancel'):
-        self.cfg['selections'] = [
-            'Move to another workspace…\tpick a plain workspace · moves this window', answer]
-        return self.run_task('send')
-
-    def test_move_list_empty_workspaces_within_always_show_count(self):
-        self.workspace_count_config(5)
-        self.cfg['workspaces'] = [{'id': 2, 'name': '2'}]
-        self.open_move_menu()
-        self.assertEqual(self.menu(), [
-            'Move to another workspace',
-            '󰉒\tNo windows\tworkspace 1',
-            '󰉒\tNo windows\tworkspace 3',
-            '󰉒\tNo windows\tworkspace 4',
-            '󰉒\tNo windows\tworkspace 5', '--', '--width', '600'])
-        self.assert_no_effect()
-
-    def test_move_list_only_tasks_exist_besides_current_workspace(self):
-        self.parked()
-        self.cfg['workspaces'] = [w for w in self.cfg['workspaces'] if w['id'] != 1]
-        self.open_move_menu('No windows\tworkspace 5')
-        self.assertEqual(self.menu()[1:-3], [
-            '󰉒\tNo windows\tworkspace 1', '󰉒\tNo windows\tworkspace 5'])
-        self.assertEqual(self.dispatches(), [
-            'hl.dsp.window.move({ window = "address:0xabc", workspace = "5", follow = true })'])
-        self.assertEqual(self.cfg['clients'][0]['workspace'], {'id': 5, 'name': '5'})
-        self.assertEqual(self.events('omarchy-notification-send')[-1][-1], 'Moved to "No windows"')
-        self.assertEqual(sorted(p.name for p in self.state.iterdir()), ['3.json', '4.json'])
-
-    def test_move_list_respects_configured_count_and_creates_empty_destination(self):
-        self.workspace_count_config(7)
-        self.open_move_menu('No windows\tworkspace 7')
-        self.assertEqual(self.menu()[1:-3], [
-            '󰉒\tNo windows\tworkspace 1',
-            '󰉒\tNo windows\tworkspace 3',
-            '󰉒\tNo windows\tworkspace 4',
-            '󰉒\tNo windows\tworkspace 5',
-            '󰉒\tNo windows\tworkspace 6',
-            '󰉒\tNo windows\tworkspace 7'])
-        self.assertEqual(self.dispatches(), [
-            'hl.dsp.window.move({ window = "address:0xabc", workspace = "7", follow = true })'])
-        self.assertIn({'id': 7, 'name': '7'}, self.cfg['workspaces'])
-        self.assertEqual(list(self.state.iterdir()), [])
-
-    def test_move_list_missing_count_defaults_to_standard_range(self):
-        path = self.workspace_count_config(3)
-        path.write_text(json.dumps({'version': 1, 'bar': {'layout': {'left': [
-            {'id': 'omarchy.workspaces'}]}}}))
-        self.open_move_menu()
-        self.assertEqual(self.menu()[1:-3], [
-            '󰉒\tNo windows\tworkspace 1',
-            '󰉒\tNo windows\tworkspace 3',
-            '󰉒\tNo windows\tworkspace 4',
-            '󰉒\tNo windows\tworkspace 5'])
-        self.assert_no_effect()
-
-    def test_move_list_includes_plain_neighbours_and_excludes_special_workspaces(self):
-        self.workspace_count_config(3)
-        self.cfg['workspaces'] = [{'id': 3, 'name': 'Desk'}, {'id': -99, 'name': 'special:scratch'},
-                                  {'id': 0, 'name': 'special'}, {'id': 2, 'name': '2'},
-                                  {'id': 1, 'name': '1'}]
-        self.cfg['clients'].append(real_window('0xdef', 'org.gnome.Nautilus', 'Folder', 3, 'Desk'))
-        self.open_move_menu('Files\tworkspace 3')
-        self.assertEqual(self.menu()[1:-3], ['󰉒\tNo windows\tworkspace 1', '󰉒\tFiles\tworkspace 3'])
-        self.assertEqual(self.dispatches(), [
-            'hl.dsp.window.move({ window = "address:0xabc", workspace = "3", follow = true })'])
-
-    def test_move_list_window_above_count_includes_gaps_to_highest_workspace(self):
-        self.workspace_count_config(3)
-        self.cfg['workspaces'] += [{'id': 8, 'name': '8'}]
-        self.cfg['activewindow']['workspace'] = {'id': 8, 'name': '8'}
-        self.cfg['clients'] = [copy.deepcopy(self.cfg['activewindow'])]
-        self.open_move_menu()
-        self.assertEqual(self.menu()[1:-3], [
-            f'󰉒\tNo windows\tworkspace {i}' for i in range(1, 8)])
-        self.assert_no_effect()
-
-    def test_move_row_hidden_when_every_destination_is_a_task(self):
-        self.workspace_count_config(1)
-        self.cfg['workspaces'] = [{'id': 2, 'name': '2'}, {'id': 1, 'name': 'Parked'}]
-        (self.state / '1.json').write_text(json.dumps({'id': 1, 'name': 'Parked', 'source': 2}))
-        self.cfg['selection'] = 'Cancel'
-        self.run_task('send')
-        self.assertEqual(self.menu()[1:-3], [
-            '󰐗\tStart task "Planning"\tsuggested from window title · moves this window',
-            '󰏫\tStart task with my own name…\ttype a custom name · moves this window',
-            '󰁌\tSend to "Parked"\tno windows yet · moves this window',
-            '󰉒\tGo to a task…\tswitch tasks · leaves this window here',
-            '󰉗\tTurn this workspace into a task…\tname this workspace · windows stay here'])
-        self.assertEqual(self.dispatches(), [])
-        self.cfg['selection'] = 'Move to another workspace…\tpick a plain workspace · moves this window'
-        self.run_task('send')
-        self.assertEqual(len(self.events('omarchy-menu-select')), 2)
-        self.assertEqual(self.dispatches(), [])
-        self.assertEqual(self.events('omarchy-notification-send'), [])
-
-    def test_move_list_invalid_config_uses_standard_range(self):
-        path = self.workspace_count_config(3)
-        for text in ('{', '{"version": 1}', json.dumps({'version': 1, 'bar': {'layout': {
-                'left': [{'id': 'omarchy.workspaces', 'persistentWorkspaces': '7'}]}}})):
-            with self.subTest(text=text):
-                path.write_text(text)
-                self.open_move_menu()
-                self.assertEqual(self.menu()[1:-3], [
-                    '󰉒\tNo windows\tworkspace 1',
-                    '󰉒\tNo windows\tworkspace 3',
-                    '󰉒\tNo windows\tworkspace 4',
-                    '󰉒\tNo windows\tworkspace 5'])
-        self.assert_no_effect()
-
-    def test_move_list_uses_widest_inline_widget_range(self):
-        path = self.workspace_count_config(3)
-        path.write_text(json.dumps({'version': 1, 'bar': {'layout': {
-            'left': [{'id': 'omarchy.workspaces', 'persistentWorkspaces': 3}],
-            'right': [{'id': 'sample.workspaces', 'persistentWorkspaces': 6}]}}}))
-        self.open_move_menu()
-        self.assertEqual(self.menu()[1:-3], [
-            '󰉒\tNo windows\tworkspace 1',
-            '󰉒\tNo windows\tworkspace 3',
-            '󰉒\tNo windows\tworkspace 4',
-            '󰉒\tNo windows\tworkspace 5',
-            '󰉒\tNo windows\tworkspace 6'])
-        self.assert_no_effect()
 
     def test_used_on_suggested_typed_and_in_place_start(self):
         for label in ('Start task "Planning"\tsuggested from window title · moves this window',
@@ -912,7 +763,6 @@ class TaskTests(unittest.TestCase):
                 self.assertEqual(self.menu()[1:-3], [
                     '󰐗\tStart task "Planning"\t' + description,
                     '󰏫\tStart task with my own name…\ttype a custom name · moves this window',
-                    '󰁌\tMove to another workspace…\tpick a plain workspace · moves this window',
                     '󰉗\tTurn this workspace into a task…\tname this workspace · windows stay here',
                 ])
                 self.assertEqual(self.menu()[-3:], ['--', '--width', '600'])
@@ -1372,7 +1222,6 @@ class TaskTests(unittest.TestCase):
             '󰐗\tStart task "Planning 2"\tsuggested from window title · moves this window',
             '󰏫\tStart task with my own name…\ttype a custom name · moves this window',
             '󰁌\tSend to "Planning"\tTerminal · moves this window',
-            '󰁌\tMove to another workspace…\tpick a plain workspace · moves this window',
             '󰉒\tGo to a task…\tswitch tasks · leaves this window here',
             '󰉗\tTurn this workspace into a task…\tname this workspace · windows stay here'])
 
@@ -1481,8 +1330,6 @@ class TaskTests(unittest.TestCase):
     def test_notifications_use_taskspaces_title(self):
         self.run_task('send')
         self.assertEqual(self.events('omarchy-notification-send')[-1][:3], ['-g', '󰌨', 'taskspaces'])
-
-
 
 class MultiMonitorTests(unittest.TestCase):
     """Run actual commands with explicit workspace owners and output activation."""

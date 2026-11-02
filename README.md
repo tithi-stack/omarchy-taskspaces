@@ -120,7 +120,7 @@ o.bind("SUPER + D", "Finish task", taskspaces_bin .. " finish")
 3. The first row, **Start task "Reply to the team"**, uses the suggested name. Its grey line says `suggested from window title · moves this window` (Chrome also shows `whole window (all tabs)`). Press Enter to accept it, or choose **Start task with my own name…** to enter your own.
 4. The window moves to a new workspace named after the task, and you follow it. A notification says `Started task "Reply to the team"`.
 
-The menu puts rows that move this window first: suggested name, custom name, **Send to "<task>"**, then **Move to another workspace…**. Rows that leave it here follow: **Go to a task…**, then **Turn this workspace into a task…** or **Rename this task…**. Each row has a grey description; choices that do not apply stay hidden.
+The menu puts rows that move this window first: suggested name, custom name, **Send to "<task>"**. Rows that leave it here follow: **Go to a task…**, then **Turn this workspace into a task…** or **Rename this task…**. Each row has a grey description; choices that do not apply stay hidden.
 
 To open a browser inside the task, use the optional new-browser-window shortcut; the stock launcher can take you to a browser window elsewhere. See [Opening more windows in a task](#opening-more-windows-in-a-task).
 
@@ -134,7 +134,7 @@ To send without following, add the optional `Super+Alt+N` binding above and pres
 
 On a numbered workspace, **Turn this workspace into a task…** names the current workspace without moving its windows; finishing that task with Keep leaves the windows there and restores the workspace's numbered name. Its grey line says `name this workspace · windows stay here`. Suggested names are capped at 35 characters so the first row always reads `Start task "<name>"`. Names you type are capped at 40 characters. Quotes and backslashes are removed from task names; names taken from an app are cleaned too. A name made only of digits gets `Task ` in front, for example `Task 2`.
 
-The menu uses these icons: 󰐗 for the suggested name, 󰏫 for typing or renaming, 󰉗 for naming the current workspace, 󰁌 for sending or moving, 󰉒 for going to a task, 󰖭 for Close, 󰐃 for Keep, and 󰁍 for Cancel. The menu uses the Nerd Font icons included with Omarchy. Send choices show window summaries followed by `· moves this window` in grey. **Move to another workspace…** lists plain destinations through the bar’s always-show range, extending to the highest workspace Hyprland currently has. Empty destinations show `No windows`; workspace numbers stay in grey. The row is hidden when no plain destination is available.
+The menu uses these icons: 󰐗 for the suggested name, 󰏫 for typing or renaming, 󰉗 for naming the current workspace, 󰁌 for sending, 󰉒 for going to a task, 󰖭 for Close, 󰐃 for Keep, and 󰁍 for Cancel. The menu uses the Nerd Font icons included with Omarchy. Send choices show window summaries followed by `· moves this window` in grey.
 
 Finishing removes the task record. In the single-screen flow, kept windows return to its starting workspace only if it still has the same name and is not another task. Otherwise they go to workspace 1. If workspace 1 is also in use by a task or has a custom name, Taskspaces uses the lowest unused workspace number. Focus follows the windows. Tasks started from a scratchpad also return to workspace 1, subject to that same safety check.
 

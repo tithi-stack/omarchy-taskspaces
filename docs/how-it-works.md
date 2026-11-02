@@ -59,15 +59,11 @@ It launches `uwsm-app -- <browser> --profile-directory=<folder> --new-window abo
 | 󰐗 | `Start task "<name>"` | `suggested from window title · moves this window`; Chrome includes `whole window (all tabs)` before the move description | Always | Creates a task with the suggested name |
 | 󰏫 | **Start task with my own name…** | `type a custom name · moves this window` | Always | Creates a task with a name you type |
 | 󰁌 | `Send to "<task>"` | Window summary followed by `· moves this window`; `no windows yet` for an empty task | Other tasks | Sends the window to that task |
-| 󰁌 | **Move to another workspace…** | `pick a plain workspace · moves this window` | Plain destinations available | Opens a list of other plain workspaces |
 | 󰉒 | **Go to a task…** | `switch tasks · leaves this window here` | Tasks exist | Opens the Go-to list |
 | 󰉗 | **Turn this workspace into a task…** | `name this workspace · windows stay here` | On a plain numbered workspace | Names the current workspace as a task |
 | 󰏫 | **Rename this task…** | `change task name · windows stay here` | On a task workspace | Renames the task |
 
 Task rows appear most recently used first; records without a `used` time sort last.
-The plain-workspace list covers the bar’s always-show range and extends to the highest workspace Hyprland currently has. It excludes this workspace, tasks and special workspaces, and sorts by number. It uses window summaries as labels, `No windows` for an empty destination, and the workspace number only in grey. Move is hidden when there are no plain destinations.
-The range reads `persistentWorkspaces` from inline bar widget settings in `omarchy/shell.json` under the config directory. Missing or invalid settings use the stock range; if several widgets set it, the widest range is used.
-Selecting a plain workspace moves the window there, including an empty destination that does not exist yet, without writing a task record.
 Suggested names are capped at 35 characters, including any duplicate-name suffix.
 Icons are Material Design glyphs from the Nerd Font shipped with Omarchy.
 
