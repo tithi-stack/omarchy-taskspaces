@@ -92,7 +92,7 @@ The suggested name comes from the window title.
 
 ## Send results
 
-- **Start task:** the notification reads `Started task "<task name>"`. The window moves to the lowest unused workspace number. That workspace is renamed to the task. The record stores the starting workspace's number and name. For a scratchpad or other special workspace, it records the fallback return workspace instead.
+- **Start task:** the notification reads `Started task "<task name>"`. On one screen, the window moves to the lowest unused workspace number at or above **First workspace for tasks** (default 6). That workspace is renamed to the task. The record stores the starting workspace's number and name. For a scratchpad or other special workspace, it records the fallback return workspace instead.
 - **Existing task:** the window moves to that task's workspace; the notification reads `Sent to "<task name>"`.
 - **No focused window:** the Go-to list opens; no window moves.
 
@@ -137,10 +137,11 @@ Turning the setting off affects creation only, so Go, Send, Finish and Forget st
 
 ## Workspace numbers
 
-- New tasks take the lowest unused workspace number. Experimental two-screen tasks need two numbers and also skip numbers reserved by workspace rules.
-- While the task exists, pressing `SUPER + 3` goes to the task, because the task is workspace 3. This follows from the number rule. It is not tested on a live desktop.
-- Send and finish do not rebind keys. They only rename the workspace number a task takes; setup adds shortcuts separately with consent.
-- When an in-place task finishes, its number becomes its name again.
+- **First workspace for tasks** (`firstTaskWorkspace` in the widget's `tithi-stack.taskspaces` entry in `omarchy/shell.json`) defaults to 6. Integers 1 to 50 are accepted; other values fall back to 6. Single-screen tasks take the lowest unused number from there, preserving live workspaces and recorded members. The setting affects new allocation only; Finish's safe return fallback still searches from 1.
+- Experimental two-screen tasks prefer pairs anchored to that setting: 6–7, 8–9 and onward by default. They skip windows, active monitors, task members, persistent or renamed workspaces and enabled numbered Hyprland rules. Setting 1 restores the previous independent allocation, such as 3 and 5 when 1, 2 and 4 are reserved. `taskspaces setup --check` explains reservations without changing state.
+- Workspaces 1 to 5 stay available for personal use by default. **Turn this workspace into a task…** keeps any chosen low number; on two screens its companion comes from the configured starting number upward. A number above 5 on the stock bar usually means a task or a window you put there yourself; the stock bar draws only up to 10, while Taskspaces can still reach higher tasks.
+- While the task exists, pressing `SUPER + 6` goes to the task on workspace 6. This follows from the number rule. It is not tested on a live desktop.
+- Send and finish do not rebind keys. They only rename the workspace number a task takes; setup adds shortcuts separately with consent. When an in-place task finishes, its number becomes its name again.
 
 ## Files and state
 

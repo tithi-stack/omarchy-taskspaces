@@ -19,6 +19,18 @@ Picking workspace numbers, remembering what lives where, and tidying up are work
 
 On a numbered workspace, **Turn this workspace into a task…** names it without moving windows; finishing with Keep makes it an ordinary numbered workspace again. Setup lets you choose free keys for these actions. See [Bindings](#bindings).
 
+### Workspace numbering
+
+New tasks start at workspace **6** by default, so **1 to 5 stay yours** for ordinary desktop use. On two screens, new tasks use 6–7, then 8–9; a reservation on either number skips that pair. A workspace above 5 in Omarchy's bar usually means an open task, or a window you put there yourself. Omarchy's stock bar draws workspace numbers only up to **10**; tasks above 10 remain accessible through the Taskspaces label and Go-to-task menu.
+
+Change **First workspace for tasks** in the Taskspaces widget settings to choose another starting number. It sets `"firstTaskWorkspace": 6` inline in the `tithi-stack.taskspaces` bar entry in `${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json`, alongside `experimentalTwoScreenTasks`. It accepts integers **1 to 50**; missing or invalid values fall back to **6**. Setting it to **1** restores the previous allocation, including non-consecutive two-screen numbers when needed. Changes affect new allocation only; open tasks keep their recorded numbers.
+
+**Turn this workspace into a task…** still works on workspaces 1 to 5. On two screens it keeps that chosen number and allocates a companion at or above the setting (for example, 3 and 6 with the default). Adopting a low workspace or lowering the setting lets you put tasks on low numbers deliberately.
+
+**Skipped numbers:** Two-screen allocation skips numbers with windows, an active monitor, another task member, a persistent or renamed workspace, or an enabled numbered Hyprland rule. A rule can come from Omarchy's **Super+L** layout toggle. Skipping it is intentional: Hyprland cannot take just the layout back out of a merged rule, so releasing a task's rule could disable the user's rule too. Single-screen tasks keep their existing reservations for live workspaces and recorded task members, including empty workspace slots.
+
+Run `taskspaces setup --check` to see the setting, connected screen count and one line per inspected workspace number with its reservation reasons. The listing includes the stricter two-screen reservations even when that experiment is off. It labels unused numbers below the setting **kept for you**, rather than available. This check is read-only: it needs no terminal or menus and never enters shortcut setup or reads or writes the bindings file.
+
 ## Two screens, one task
 
 Tasks use one workspace by default, even with two screens connected.
