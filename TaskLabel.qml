@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Wayland
 import Quickshell.Hyprland
+import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
@@ -28,7 +29,34 @@ BarWidget {
     return window && window.screen ? Hyprland.monitorFor(window.screen) : null
   }
   readonly property var ws: monitor ? monitor.activeWorkspace : null
-  readonly property string taskName: ws && ws.name !== String(ws.id) ? ws.name : ""
+  property var taskLabels: ({})
+  function taskForWorkspace(workspace, labels) {
+    if (!workspace) return ""
+    var task = labels[String(workspace.id)]
+    return task && task.workspace_name === workspace.name ? task.name : ""
+  }
+  readonly property string taskName: taskForWorkspace(ws, taskLabels)
+
+  // Each bar resolves its own active workspace. Polling also catches metadata
+  // renames and recovery after config reload without a hot-plug listener.
+  Process {
+    id: taskLabelsProcess
+    command: ["python3", "-I", root.taskspacesCommand + "-members", "true",
+      Quickshell.env("XDG_RUNTIME_DIR") + "/taskspaces", "labels"]
+    running: true
+    stdout: StdioCollector {
+      onStreamFinished: {
+        try { root.taskLabels = JSON.parse(text) }
+        catch (error) { root.taskLabels = ({}) }
+      }
+    }
+  }
+  Timer {
+    interval: 1000
+    running: true
+    repeat: true
+    onTriggered: if (!taskLabelsProcess.running) taskLabelsProcess.running = true
+  }
   readonly property var toplevel: ToplevelManager.activeToplevel
   readonly property string title: toplevel ? (toplevel.title || toplevel.appId || "") : ""
   readonly property bool taskActive: taskName !== ""

@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- New tasks span two connected screens with one task identity, one menu row and a shared bar label; existing tasks and one-screen creation keep their current behavior.
+- Go restores both task areas, recreates missing empty areas and reserves all member IDs. Task-owned runtime persistence rules avoid replacing configured rules and are disabled on Finish.
+- Explicit Go after unplug merges task windows on the remaining screen; Go after reconnect restores recorded windows to their original areas with address/identity checks and retained recovery state on failure. Silent send preserves both visible workspaces.
+- Paired Finish reviews both screens once, supports each area's safe return destination, and retains tasks on refused closes, new windows and partial failures.
+
 - Left-click the bar label (task name or window title) to launch your own existing Go-to-task list, with a pointing-hand cursor and a **click for tasks** hover hint. The widget itself never focuses, moves or closes a window; focusing happens only when you pick a row.
 
 ### Fixed

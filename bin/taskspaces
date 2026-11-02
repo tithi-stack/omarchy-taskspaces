@@ -119,23 +119,29 @@ dispatch() {
 move_window() {
   dispatch "hl.dsp.window.move({ window = $(lua_string "address:$1"), workspace = $(lua_string "$2"), follow = $3 })" "${4:-}"
 }
-prune() {
-  local file record
-  tasks='[]'
-  shopt -s nullglob
-  for file in "$state_dir"/*.json; do
-    if record=$(jq -ce --argjson workspaces "$workspaces" '
-      . as $task | select((.id | type) == "number" and .id > 0
-        and (.source | type) == "number" and (.name | type) == "string")
-      | select(any($workspaces[]; .id == $task.id and .name == $task.name))' "$file"); then
-      [[ $(basename "$file") == "$(jq -r .id <<< "$record").json" ]] || continue
-      tasks=$(jq -c --argjson task "$record" '. + [$task]' <<< "$tasks")
-    elif $dry; then printf 'Would prune: %s\n' "$file"; else rm -- "$file"; fi
-  done
+# Membership and reconciliation live in a local Python helper; the existing
+# single-workspace workflow remains compatible with older records.
+member_tool() {
+  # Resolve the documented ~/.local/bin/taskspaces symlink before finding the
+  # companion helper. runpy needs no additional command on an isolated PATH.
+  python3 -I -c '
+import runpy, sys
+from pathlib import Path
+helper = Path(sys.argv[1]).resolve().with_name("taskspaces-members")
+sys.argv = [str(helper), *sys.argv[2:]]
+runpy.run_path(str(helper), run_name="__main__")
+' "${BASH_SOURCE[0]}" "$dry" "$state_dir" "$@"
 }
+paired_available() {
+  [[ $(hyprctl monitors -j | jq '[.[] | select(.disabled != true and (.mirrorOf == null or .mirrorOf == "none"))] | length') == 2 ]]
+}
+prune() {
+  tasks=$(member_tool records "$workspaces")
+}
+
 dedupe() {
   local base=$1 name=$1 limit=${2:-0} suffix=2
-  while jq -e --arg name "$name" 'any(.[]; .name == $name
+  while jq -e --arg name "$name" --argjson tasks "${tasks:-[]}" 'any($tasks[]; .name == $name) or any(.[]; .name == $name
     or (($name | test("^[0-9]+$")) and .id == ($name | tonumber)))' <<< "$workspaces" >/dev/null; do
     if (( limit > 0 )); then
       name="${base:0:limit - ${#suffix} - 1} $suffix"
@@ -158,6 +164,15 @@ rename_task() {
   [[ -n ${name//[[:space:]]/} ]] || return 0
   name=$(name_value sanitize "$cls" "$name")
   [[ -n $name ]] || return 0
+  if jq -e '.members | length > 1' <<< "$record" >/dev/null; then
+    workspaces=$(hyprctl workspaces -j)
+    workspaces=$(jq -c --argjson members "$(jq .members <<< "$record")" '[.[] | select(.id as $id | any($members[]; .id == $id) | not)]' <<< "$workspaces")
+    tasks=$(jq -c --argjson id "$(jq .id <<< "$record")" '[.[] | select(.id != $id)]' <<< "${tasks:-[]}")
+    name=$(dedupe "$name")
+    member_tool rename "$record" "$name"
+    notify "Renamed task: $name"
+    return
+  fi
   # Recheck the captured workspace after input; ignore its own name in dedupe.
   workspaces=$(hyprctl workspaces -j)
   jq -e --argjson id "$source" --arg name "$(jq -r .name <<< "$record")" \
@@ -178,7 +193,7 @@ rename_task() {
   notify_workspace_name "Renamed task: $name" "$source" "$warn_empty"
 }
 first_free() {
-  jq -r '[.[] | .id | select(. > 0)] as $used | first(range(1; ($used | length) + 2) | select(. as $id | $used | index($id) | not))' <<< "$workspaces"
+  jq -r --argjson tasks "${tasks:-[]}" '[(.[] | .id), ($tasks[] | .members[].id) | select(. > 0)] as $used | first(range(1; ($used | length) + 2) | select(. as $id | $used | index($id) | not))' <<< "$workspaces"
 }
 make_workspace_task() {
   local source=$1 cls=$2 warn_empty=${3:-false} name workspaces pending
@@ -192,6 +207,11 @@ make_workspace_task() {
     'any(.[]; .id == $id and .id > 0 and .name == ($id | tostring))' <<< "$workspaces" >/dev/null || return 0
   [[ ! -e $state_dir/$source.json ]] || return 0
   name=$(dedupe "$name")
+  if paired_available; then
+    member_tool new "$source" "$name" "$source" "$source" '{}' true true
+    notify "Started task \"$name\""
+    return
+  fi
   if ! $dry; then
     pending="$state_dir/$source.json.tmp"
     jq -n --argjson id "$source" --arg name "$name" --argjson created "$(date +%s)" \
@@ -231,7 +251,7 @@ build_task_rows() {
   clients=$(hyprctl clients -j)
   while IFS= read -r record; do
     candidate=$(jq -r .id <<< "$record")
-    summary=$(window_summary "$(jq -c --argjson id "$candidate" '[.[] | select(.workspace.id == $id and .mapped != false)]' <<< "$clients")")
+    summary=$(window_summary "$(jq -c --argjson members "$(jq .members <<< "$record")" '[.[] | select(.mapped != false and (.workspace.id as $id | any($members[]; .id == $id)))]' <<< "$clients")")
     task_rows[$candidate]="$(jq -r .name <<< "$record")"$'\t'"$summary"
     if [[ $mode == send ]]; then
       [[ -n $summary && $summary != 'No windows' ]] || summary='no windows yet'
@@ -243,7 +263,7 @@ build_task_rows() {
   done < <(jq -c --argjson excluded "$excluded" '
     sort_by([(if (.used | type) == "number" then 0 else 1 end),
       -(if (.used | type) == "number" then .used else 0 end), .id])[]
-    | select(.id != $excluded)' <<< "$tasks")
+    | select(any(.members[]; .id == $excluded) | not)' <<< "$tasks")
 }
 go_task() {
   local selection record candidate target='' name
@@ -265,6 +285,10 @@ go_task() {
     fi
   done < <(jq -c '.[]' <<< "$tasks")
   [[ -n $target ]] || return 0
+  if jq -e '.members | length > 1' <<< "$record" >/dev/null; then
+    member_tool go "$record"
+    return
+  fi
   workspaces=$(hyprctl workspaces -j)
   jq -e --argjson id "$target" --arg name "$name" 'any(.[]; .id == $id and .name == $name)' <<< "$workspaces" >/dev/null || return 0
   dispatch "hl.dsp.focus({ workspace = $(lua_string "$target") })"
@@ -282,7 +306,7 @@ plain_workspace_destinations() {
   jq -c --argjson count "$count" --argjson tasks "$tasks" --argjson source "$source" '
     . as $live | ([$count, (.[] | .id | select(. > 0))] | max) as $highest
     | [range(1; $highest + 1) as $id | select($id != $source)
-       | select(any($tasks[]; .id == $id) | not)
+       | select(any($tasks[]; any(.members[]; .id == $id)) | not)
        | (first($live[] | select(.id == $id)) // {id:$id, name:($id | tostring)})]
   ' <<< "$workspaces"
 }
@@ -302,7 +326,7 @@ empty_workspace_task() {
     'any(.[]; .id == $workspace.id and .name == $workspace.name and .windows == 0)' <<< "$workspaces" >/dev/null; then
     go_task; return
   fi
-  source_record=$(jq -c --argjson id "$source" 'first(.[] | select(.id == $id)) // empty' <<< "$tasks")
+  source_record=$(jq -c --argjson id "$source" 'first(.[] | select(any(.members[]; .id == $id))) // empty' <<< "$tasks")
   if [[ -n $source_record ]]; then
     action=$rename
     rows+=("$(printf '󰏫\t%s' "$rename")")
@@ -312,7 +336,7 @@ empty_workspace_task() {
   else
     go_task; return
   fi
-  if jq -e --argjson id "$source" 'any(.[]; .id != $id)' <<< "$tasks" >/dev/null; then
+  if jq -e --argjson id "$source" 'any(.[]; all(.members[]; .id != $id))' <<< "$tasks" >/dev/null; then
     rows+=("$(printf '󰉒\t%s' "$go")")
   fi
   if $dry; then
@@ -360,7 +384,7 @@ send_task() {
   [[ $plain_workspaces == '[]' ]] || rows+=("$(printf '󰁌\t%s' "$move")")
   [[ $tasks == '[]' ]] || rows+=("$(printf '󰉒\t%s' "$go")")
   local source_record
-  source_record=$(jq -c --argjson source "$source" 'first(.[] | select(.id == $source)) // empty' <<< "$tasks")
+  source_record=$(jq -c --argjson source "$source" 'first(.[] | select(any(.members[]; .id == $source))) // empty' <<< "$tasks")
   [[ -z $source_record ]] || rows+=("$(printf '󰏫\t%s' "$rename")")
   if [[ -z $source_record && ! -e $state_dir/$source.json ]] && jq -e --argjson id "$source" \
     'any(.[]; .id == $id and .id > 0 and .name == ($id | tostring))' <<< "$workspaces" >/dev/null; then
@@ -391,6 +415,11 @@ send_task() {
     if [[ $selection == "$first" ]]; then name=$(dedupe "$name" 35); else name=$(dedupe "$name"); fi
     target=$(first_free)
     printf 'Target workspace: %s; name: %s; source: %s; address: %s\n' "$target" "$name" "$source" "$address"
+    if paired_available; then
+      member_tool new "$target" "$name" "$return_source" "$source_name" "$window" "$follow" false
+      notify "Started task \"$name\""
+      return
+    fi
     move_window "$address" "$target" "$follow"
     dispatch "hl.dsp.workspace.rename({ workspace = $(lua_string "$target"), name = $(lua_string "$name") })"
     if ! $dry; then
@@ -435,9 +464,14 @@ send_task() {
           name=$(jq -r .name <<< "$record")
           break
         fi
-      done < <(jq -c --argjson source "$source" '.[] | select(.id != $source)' <<< "$tasks")
+      done < <(jq -c --argjson source "$source" '.[] | select(all(.members[]; .id != $source))' <<< "$tasks")
     fi
     [[ -n $target ]] || return 0
+    if ! $plain_target && jq -e '.members | length > 1' <<< "$record" >/dev/null; then
+      member_tool send "$record" "$window" "$follow"
+      notify "Sent to \"$name\""
+      return
+    fi
     workspaces=$(hyprctl workspaces -j)
     if $plain_target; then
       # Empty destinations need not exist yet; reject one that became a task.
@@ -462,11 +496,11 @@ finish_destination() {
   source_name=$(jq -r '.source_name // (.source | tostring)' <<< "$record")
   if (( source > 0 )) && jq -e --argjson source "$source" --arg name "$source_name" --argjson tasks "$tasks" '
     any(.[]; .id == $source and .name == $name)
-    and (any($tasks[]; .id == $source) | not)' <<< "$workspaces" >/dev/null; then
+    and (any($tasks[]; any(.members[]; .id == $source)) | not)' <<< "$workspaces" >/dev/null; then
     printf '%s\n' "$source"
   elif jq -e --argjson tasks "$tasks" '
     (any(.[]; .id == 1 and .name != "1") | not)
-    and (any($tasks[]; .id == 1) | not)' <<< "$workspaces" >/dev/null; then
+    and (any($tasks[]; any(.members[]; .id == 1)) | not)' <<< "$workspaces" >/dev/null; then
     printf '1\n'
   else
     # Even the fallback may belong to another task. Use a free workspace then.
@@ -500,8 +534,12 @@ finish_task() {
   id=$(jq -er '.id | select(type == "number")' <<< "$workspace")
   workspaces=$(hyprctl workspaces -j)
   prune
-  record=$(jq -c --argjson id "$id" 'first(.[] | select(.id == $id)) // empty' <<< "$tasks")
+  record=$(jq -c --argjson id "$id" 'first(.[] | select(any(.members[]; .id == $id))) // empty' <<< "$tasks")
   if [[ -z $record ]]; then notify "This workspace isn't a task"; return; fi
+  if jq -e '.members | length > 1' <<< "$record" >/dev/null; then
+    member_tool finish "$record"
+    return
+  fi
   name=$(jq -r .name <<< "$record")
   source=$(jq -r .source <<< "$record")
   destination=$(finish_destination)

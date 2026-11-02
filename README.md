@@ -1,11 +1,11 @@
 # Taskspaces
 
 Start a task with one key, finish it with one key: you never pick a workspace number or maintain a workspace.
-Send a window to a named task workspace, open what you need there, then close the task's windows or move them back.
+Send a window to a named task, open what you need across its screens, then close the task's windows or move them back.
 
 <img src="docs/assets/hero.png" width="800" alt="Send one window to a named task workspace, open the other windows you need there, then finish the group by closing its windows or moving them back.">
 
-Example: send one window to a task, then open the other windows you need inside it. Finish handles the windows on that task workspace.
+Example: send one window to a task, then open the other windows you need inside it. With two connected screens, new tasks use both; Finish handles their combined windows.
 
 ## Why
 
@@ -19,9 +19,21 @@ Picking workspace numbers, remembering what lives where, and tidying up are work
 
 On a numbered workspace, **Turn this workspace into a task…** names it without moving windows; finishing with Keep makes it an ordinary numbered workspace again. Setup lets you choose free keys for these actions. See [Bindings](#bindings).
 
+## Two screens, one task
+
+New tasks automatically use both connected screens. Your chosen window stays on its starting screen, and the other screen starts empty. Each screen has its own native workspace, but both bars show the same task name. Menus list the task once. One-screen machines keep the existing single-workspace flow; older tasks stay on one screen.
+
+**Go to task** switches both screens together and returns focus to the initiating screen. Send moves only your chosen window to the task area matching its screen; silent send leaves both visible workspaces unchanged. Finish works from either screen, reviews the combined windows once, and returns kept windows to each area's safe starting workspace. For paired tasks, windows appearing after confirmation are left alone and keep the task unfinished.
+
+After unplugging a screen, choose the task with **Go to task** to combine its windows on the remaining screen. After reconnecting, choose it again to return the moved windows to their original screens. Only these explicit task selections (including send-and-follow) reconcile the layout; there is no hot-plug listener. Windows opened while combined stay on that area; windows you move outside the task are left there.
+
+Empty areas remain reserved in the task record and are recreated on Go. On Hyprland 0.56, task-owned runtime persistence rules keep them alive where no existing numbered rule would be replaced. No Hyprland config file is edited. Finish releases only these task-owned rules. Selecting a native numbered workspace changes only that screen, and its bar shows the task actually present there. Metadata labels refresh within one second.
+
+Follow-up: expanding an existing one-screen task is not included. Three-screen task policy is not supported.
+
 ## Status and requirements
 
-**Alpha (0.1.0) for Omarchy 4.** Tried on Omarchy 4.0.4 with Hyprland 0.56.2. Not yet tested: multiple monitors, special workspaces, Hyprland removing an empty task workspace, and app save prompts on close. The browser helper supports Chromium-family browsers only.
+**Alpha (0.1.0) for Omarchy 4.** The original single-screen flow was tried on Omarchy 4.0.4 with Hyprland 0.56.2. Paired-screen switching, missing empty workspaces and unplug/replug recovery have mock coverage. Two-focus switching, runtime persistence across a real unplug/replug, both live bar labels, special overlays and app save prompts still need a controlled desktop trial. The browser helper supports Chromium-family browsers only.
 See [Status](#status) for runtime tools and limits.
 
 ## Install
@@ -112,7 +124,7 @@ The bar shows the task icon followed by `Reply to the team`.
 
 Press your finish key (`Super+D` by default) to finish. With one window, choose **Close 1 window and finish**, **Keep 1 window and finish**, or **Cancel**. With more windows, the rows show the count and use `windows`. The keep row says `returns to workspace S · nothing is closed` in grey, or `stays in workspace S · nothing is closed` for a task made from a numbered workspace. `S` is the workspace number.
 
-Choose one. If you choose Close and an app keeps its window open, for example to ask you to save, the task stays unfinished. Taskspaces waits up to 30 seconds. It stops early after 10 seconds with no windows closing if no new window has appeared, then names up to three windows still open. Windows closed or opened while the menu was open are checked again before the choice runs.
+Choose one. If you choose Close and an app keeps its window open, for example to ask you to save, the task stays unfinished. Taskspaces waits up to 30 seconds. It stops early after 10 seconds with no windows closing if no new window has appeared, then names up to three windows still open. Windows are checked again before the choice runs. Paired tasks act only on the reviewed windows; a new window keeps the task unfinished.
 
 To send without following, press your silent send key (`Super+Alt+N` by default) in step 2. The full menu rows and naming rules are in [How Taskspaces works](docs/how-it-works.md).
 
@@ -136,7 +148,7 @@ If the Go-to list has no tasks, the notification reads `No tasks yet`.
 
 On an empty numbered workspace, the send key opens **Task** with **Turn this workspace into a task…** (`name this empty workspace` in grey), or **Rename this task…** (`change this empty task name`) if it is already a task. **Go to a task…** (`switch to another task`) appears when other tasks exist. Naming uses the same **Task name** prompt and keeps you here.
 
-For an empty workspace that is not persistent, the confirmation adds `open a window before leaving or this name will be lost`. Hyprland drops that workspace when you leave it empty; its name disappears, and Taskspaces removes its record on the next task refresh. Open a window before switching away to keep the task. No persistence rule is added. Other workspaces without a focused window keep the Go-to list fallback.
+For an existing single-workspace task that is not persistent, the confirmation adds `open a window before leaving or this name will be lost`. Hyprland drops that workspace when you leave it empty; its name disappears, and Taskspaces removes its record on the next task refresh. Open a window before switching away to keep the task. This warning does not apply to new paired tasks, whose missing areas remain recorded and recover on Go. Other workspaces without a focused window keep the Go-to list fallback.
 
 ## Opening more windows in a task
 
@@ -148,7 +160,7 @@ Setup offers this as a separate optional shortcut before the final confirmation.
 
 ## Uninstall
 
-1. Remove setup's shortcuts before deleting the plugin:
+1. Finish paired tasks first to release their runtime persistence rules, then remove setup's shortcuts before deleting the plugin:
    ```bash
    "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/tithi-stack.taskspaces/bin/taskspaces" setup --remove
    ```

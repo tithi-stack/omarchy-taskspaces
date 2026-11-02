@@ -28,16 +28,39 @@ with (root / 'events.jsonl').open('a') as out:
     out.write(json.dumps([cmd, args]) + '\n')
 def save(): cfgpath.write_text(json.dumps(cfg))
 if cmd == 'hyprctl':
-    if args[0] in ('workspaces', 'clients', 'activewindow', 'activeworkspace'):
+    if args[0] in ('workspaces', 'clients', 'activewindow', 'activeworkspace', 'monitors', 'workspacerules'):
         if args[0] == 'clients' and 'polls_since_close' in cfg:
             cfg['polls_since_close'] += 1
             if cfg.get('close_after_polls') == cfg['polls_since_close']:
                 cfg['clients'] = []
             save()
-        print(json.dumps(cfg[args[0]]))
+        if args[0] == 'monitors':
+            print(json.dumps(cfg.get('monitors', [{'id': 0, 'name': 'eDP-1', 'focused': True, 'activeWorkspace': cfg['activeworkspace']}])))
+        else: print(json.dumps(cfg.get(args[0], [])))
+    elif args[0] == 'eval':
+        code = args[1]
+        if cfg.get('eval_error'):
+            print('mock rule failure'); sys.exit(0)
+        cfg.setdefault('workspacerules', [])
+        cfg.setdefault('owned_rules', {})
+        key = re.search(r'taskspaces:([0-9]+)', code)[1]
+        if 'hl.workspace_rule' in code:
+            wid = int(key)
+            name = re.search(r'default_name = "([^"]+)"', code)[1]
+            cfg['owned_rules'][key] = name
+            cfg['workspacerules'].append({'workspaceString': key, 'enabled': True})
+            if not cfg.get('no_persistent_creation') and not any(w['id'] == wid for w in cfg['workspaces']):
+                owner = next(m for m in cfg['monitors'] if m.get('focused'))['name']
+                cfg['workspaces'].append({'id': wid, 'name': name, 'monitor': owner, 'windows': 0, 'ispersistent': True})
+        if 'r:set_enabled(false)' in code:
+            cfg['workspacerules'] = [r for r in cfg['workspacerules'] if r['workspaceString'] != key or key not in cfg['owned_rules']]
+        save(); print('ok')
     elif args[0] == 'dispatch':
         dsp = args[1]
-        if cfg.get('dispatch_error'):
+        cfg['dispatch_count'] = cfg.get('dispatch_count', 0) + 1
+        if cfg.get('ignore_moves') and dsp.startswith('hl.dsp.window.move'):
+            print('ok'); sys.exit(0)
+        if cfg.get('dispatch_error') or cfg.get('fail_dispatch_at') == cfg['dispatch_count'] or (cfg.get('fail_matching') and cfg['fail_matching'] in dsp):
             print('mock dispatcher failure')
             sys.exit(0)
         if dsp.startswith(('hl.dsp.window.move', 'hl.dsp.window.close')):
@@ -48,10 +71,31 @@ if cmd == 'hyprctl':
             if not any(w['address'] == addr for w in cfg['clients']):
                 print('window not found')
                 sys.exit(0)
+        if 'monitors' in cfg and dsp.startswith('hl.dsp.focus'):
+            match = re.search(r'workspace = "([0-9]+)"', dsp)
+            if match:
+                dest = int(match[1])
+                ws = next((w for w in cfg['workspaces'] if w['id'] == dest), None)
+                if ws is None:
+                    owner = next(m for m in cfg['monitors'] if m.get('focused'))['name']
+                    ws = {'id': dest, 'name': str(dest), 'monitor': owner, 'windows': 0}
+                    cfg['workspaces'].append(ws)
+                for m in cfg['monitors']:
+                    m['focused'] = m['name'] == ws['monitor']
+                    if m['focused']: m['activeWorkspace'] = dict(ws)
+                cfg['activeworkspace'] = dict(ws)
+            else:
+                owner = re.search(r'monitor = "([^"]+)"', dsp)[1]
+                for m in cfg['monitors']: m['focused'] = m['name'] == owner
+        if dsp.startswith('hl.dsp.workspace.move'):
+            dest = int(re.search(r'workspace = "([0-9]+)"', dsp)[1])
+            owner = re.search(r'monitor = "([^"]+)"', dsp)[1]
+            for w in cfg['workspaces']:
+                if w['id'] == dest: w['monitor'] = owner
         if dsp.startswith('hl.dsp.window.move'):
             dest = int(re.search(r'workspace = "([0-9]+)"', dsp)[1])
             if not any(w['id'] == dest for w in cfg['workspaces']):
-                cfg['workspaces'].append({'id': dest, 'name': str(dest)})
+                cfg['workspaces'].append({'id': dest, 'name': str(dest), **({'monitor': next(m for m in cfg['monitors'] if m.get('focused'))['name']} if 'monitors' in cfg else {})})
             for w in cfg['clients']:
                 if w['address'] == addr:
                     w['workspace'] = dict(next(workspace for workspace in cfg['workspaces'] if workspace['id'] == dest))
@@ -66,6 +110,15 @@ if cmd == 'hyprctl':
             cfg['clients'] = [w for w in cfg['clients'] if w['address'] != addr]
             if cfg.get('remove_empty_workspace'):
                 cfg['workspaces'] = [w for w in cfg['workspaces'] if w['id'] != cfg['activeworkspace']['id']]
+        if 'monitors' in cfg:
+            for ws in cfg['workspaces']:
+                ws['windows'] = sum(w['workspace']['id'] == ws['id'] for w in cfg['clients'])
+            for m in cfg['monitors']:
+                active = next((w for w in cfg['workspaces'] if w['id'] == m['activeWorkspace']['id']), None)
+                if active: m['activeWorkspace'] = dict(active)
+            if cfg.get('destroy_empty'):
+                active_ids = {m['activeWorkspace']['id'] for m in cfg['monitors']}
+                cfg['workspaces'] = [w for w in cfg['workspaces'] if w.get('windows') or w['id'] in active_ids or w.get('ispersistent')]
         save()
         print('ok')
     else: raise RuntimeError(args)
@@ -1338,6 +1391,380 @@ class TaskTests(unittest.TestCase):
     def test_notifications_use_taskspaces_title(self):
         self.run_task('send')
         self.assertEqual(self.events('omarchy-notification-send')[-1][:3], ['-g', '󰌨', 'taskspaces'])
+
+
+
+class MultiMonitorTests(unittest.TestCase):
+    """Run actual commands with explicit workspace owners and output activation."""
+    setUp = TaskTests.setUp
+    write_cfg = TaskTests.write_cfg
+    run_task = TaskTests.run_task
+    events = TaskTests.events
+    dispatches = TaskTests.dispatches
+    menu = TaskTests.menu
+
+    def screens(self):
+        self.cfg['workspaces'] = [real_workspace(1, '1'), real_workspace(2, '2')]
+        self.cfg['workspaces'][0]['monitor'] = 'HDMI-A-1'
+        self.cfg['monitors'] = [dict(id=0, name='eDP-1', focused=True, activeWorkspace={'id': 2, 'name': '2'}),
+                                dict(id=1, name='HDMI-A-1', focused=False, activeWorkspace={'id': 1, 'name': '1'})]
+        self.cfg['clients'] = [real_window('0xabc', 'kitty', 'Planning', 2, '2')]
+        self.cfg['activewindow'] = copy.deepcopy(self.cfg['clients'][0])
+        self.cfg['select_first'] = True
+
+    def start(self, *args):
+        self.screens()
+        self.run_task('send', *args)
+        return json.loads((self.state / '3.json').read_text())
+
+    def pair(self, empty_other=False):
+        self.screens()
+        record = dict(id=3, name='Planning', source=2, source_name='2', created=100, used=100,
+                      members=[dict(id=3, name='taskspaces-3-1', output='eDP-1', source=2, source_name='2'),
+                               dict(id=4, name='taskspaces-3-2', output='HDMI-A-1', source=1, source_name='1')])
+        for m in record['members']:
+            ws = real_workspace(m['id'], m['name'], 0)
+            ws['monitor'] = m['output']
+            self.cfg['workspaces'].append(ws)
+        self.cfg['clients'] = [real_window('0xabc', 'kitty', 'Planning', 3, 'taskspaces-3-1')]
+        if not empty_other:
+            win = real_window('0xdef', 'google-chrome', 'Reference', 4, 'taskspaces-3-2')
+            win['monitor'] = 1
+            self.cfg['clients'].append(win)
+        (self.state / '3.json').write_text(json.dumps(record))
+        return record
+
+    def saved(self):
+        return json.loads((self.state / '3.json').read_text())
+
+    def owners(self):
+        return {w['id']: w['monitor'] for w in self.cfg['workspaces']}
+
+    def active(self):
+        return {m['name']: m['activeWorkspace']['id'] for m in self.cfg['monitors']}
+
+    def unplug(self, output='eDP-1'):
+        self.cfg['monitors'] = [m for m in self.cfg['monitors'] if m['name'] == output]
+        self.cfg['monitors'][0]['focused'] = True
+        for ws in self.cfg['workspaces']: ws['monitor'] = output
+
+    def reconnect(self):
+        self.cfg['monitors'].append(dict(id=1, name='HDMI-A-1', focused=False, activeWorkspace={'id': 1, 'name': '1'}))
+
+    def finish_here(self, member=4, choice='Close 2 windows and finish'):
+        self.cfg['activeworkspace'] = next(w for w in self.cfg['workspaces'] if w['id'] == member)
+        self.cfg['select_first'] = False
+        self.cfg['selection'] = choice
+        return self.run_task('finish')
+
+    def test_new_task_owns_two_outputs_with_one_window(self):
+        rec = self.start()
+        self.assertEqual([m['id'] for m in rec['members']], [3, 4])
+        self.assertEqual(len(self.cfg['clients']), 1)
+        self.assertEqual(self.cfg['clients'][0]['workspace']['id'], 3)
+        self.assertEqual(self.active(), {'eDP-1': 3, 'HDMI-A-1': 4})
+        self.assertEqual(self.owners()[4], 'HDMI-A-1')
+        self.assertEqual(len({m['name'] for m in rec['members']}), 2)
+        self.assertTrue(self.cfg['monitors'][0]['focused'])
+
+    def test_start_from_external_keeps_window_there(self):
+        self.screens()
+        for m in self.cfg['monitors']: m['focused'] = m['name'] == 'HDMI-A-1'
+        self.cfg['clients'][0]['monitor'] = 1
+        self.cfg['activewindow'] = copy.deepcopy(self.cfg['clients'][0])
+        self.run_task('send')
+        self.assertEqual(self.saved()['members'][0]['output'], 'HDMI-A-1')
+        self.assertEqual(self.owners()[3], 'HDMI-A-1')
+        self.assertTrue(self.cfg['monitors'][1]['focused'])
+
+    def test_start_silent_leaves_both_views(self):
+        self.screens()
+        before = self.active()
+        self.run_task('send', '--silent')
+        self.assertEqual(self.active(), before)
+        self.assertFalse(any('hl.dsp.focus' in d for d in self.dispatches()))
+        self.assertEqual(self.cfg['clients'][0]['workspace']['id'], 3)
+
+    def test_empty_workspace_naming_adds_empty_companion(self):
+        self.screens()
+        self.cfg['clients'] = []
+        self.cfg['activewindow'] = {}
+        self.cfg['workspaces'][1]['windows'] = 0
+        self.run_task('send')
+        record = json.loads((self.state / '2.json').read_text())
+        self.assertEqual([m['id'] for m in record['members']], [2, 3])
+        self.assertEqual(self.cfg['clients'], [])
+        self.assertEqual(self.active(), {'eDP-1': 2, 'HDMI-A-1': 3})
+
+    def test_go_selects_one_row_for_two_members(self):
+        self.pair()
+        self.run_task('go')
+        rows = [r for r in self.menu() if r.startswith('󰉒')]
+        self.assertEqual(len(rows), 1)
+        self.assertIn('Terminal, Chrome', rows[0])
+        self.assertNotIn('taskspaces-3', ''.join(self.menu()))
+        self.assertEqual(self.active(), {'eDP-1': 3, 'HDMI-A-1': 4})
+
+    def test_go_restores_missing_empty_member_and_reserved_id(self):
+        self.pair(empty_other=True)
+        self.cfg['workspaces'] = [w for w in self.cfg['workspaces'] if w['id'] != 4]
+        self.run_task('go')
+        self.assertEqual(self.active()['HDMI-A-1'], 4)
+        self.assertEqual(self.owners()[4], 'HDMI-A-1')
+        self.assertEqual(len(self.saved()['members']), 2)
+
+    def test_go_recovers_without_persistent_creation(self):
+        self.pair(empty_other=True)
+        self.cfg['workspaces'] = [w for w in self.cfg['workspaces'] if w['id'] != 4]
+        self.cfg['no_persistent_creation'] = True
+        self.run_task('go')
+        self.assertEqual(self.active()['HDMI-A-1'], 4)
+        self.assertEqual(next(w for w in self.cfg['workspaces'] if w['id'] == 4)['name'], 'taskspaces-3-2')
+
+    def test_prune_retains_pair_when_both_members_missing(self):
+        self.pair(empty_other=True)
+        self.cfg['clients'] = []
+        self.cfg['workspaces'] = self.cfg['workspaces'][:2]
+        self.run_task('go')
+        self.assertTrue((self.state / '3.json').exists())
+        self.assertEqual(self.active(), {'eDP-1': 3, 'HDMI-A-1': 4})
+
+    def test_new_task_does_not_reuse_absent_reserved_member(self):
+        self.pair(empty_other=True)
+        self.cfg['workspaces'] = [w for w in self.cfg['workspaces'] if w['id'] != 4]
+        self.cfg['activewindow'] = real_window('0x111', 'kitty', 'Other', 2, '2')
+        self.cfg['clients'].append(self.cfg['activewindow'])
+        self.run_task('send')
+        other = json.loads((self.state / '5.json').read_text())
+        self.assertEqual([m['id'] for m in other['members']], [5, 6])
+
+    def test_go_refuses_live_member_name_collision(self):
+        self.pair()
+        next(w for w in self.cfg['workspaces'] if w['id'] == 4)['name'] = 'Unrelated'
+        self.run_task('go', expected=1)
+        self.assertEqual(self.dispatches(), [])
+        self.assertTrue((self.state / '3.json').exists())
+
+    def test_go_partial_dispatch_failure_retains_record(self):
+        self.pair()
+        self.cfg['fail_dispatch_at'] = 2
+        self.run_task('go', expected=1)
+        self.assertEqual(self.saved()['used'], 100)
+
+    def test_rule_failure_retains_task(self):
+        self.pair()
+        self.cfg['eval_error'] = True
+        self.run_task('go', expected=1)
+        self.assertEqual(self.saved()['used'], 100)
+
+    def test_existing_rule_is_never_replaced(self):
+        self.pair()
+        self.cfg['workspacerules'] = [{'workspaceString': '3', 'enabled': True}]
+        self.run_task('go')
+        calls = [a[1] for a in self.events('hyprctl') if a[0] == 'eval' and 'taskspaces:3' in a[1]]
+        self.assertTrue(calls)
+        self.assertTrue(all('hl.workspace_rule' not in c for c in calls))
+
+    def test_send_routes_address_to_matching_screen_silently(self):
+        self.pair()
+        win = real_window('0x111', 'kitty', 'Incoming', 1, '1')
+        win['monitor'] = 1
+        self.cfg['clients'].append(win)
+        self.cfg['activewindow'] = copy.deepcopy(self.cfg['clients'][0])
+        before = self.active()
+        self.cfg['select_first'] = False
+        self.cfg['selection'] = 'Send to "Planning"\tTerminal, Chrome · moves this window'
+        self.run_task('send', '--silent', '--address', '0x111')
+        self.assertEqual(next(w for w in self.cfg['clients'] if w['address'] == '0x111')['workspace']['id'], 4)
+        self.assertEqual(self.active(), before)
+        self.assertEqual(len(self.dispatches()), 1)
+
+    def test_send_follow_activates_pair(self):
+        self.pair()
+        win = real_window('0x111', 'kitty', 'Incoming', 2, '2')
+        self.cfg['clients'].append(win)
+        self.cfg['activewindow'] = win
+        self.cfg['select_first'] = False
+        self.cfg['selection'] = 'Send to "Planning"\tTerminal, Chrome · moves this window'
+        self.run_task('send')
+        self.assertEqual(self.active(), {'eDP-1': 3, 'HDMI-A-1': 4})
+        self.assertEqual(next(w for w in self.cfg['clients'] if w['address'] == '0x111')['workspace']['id'], 3)
+
+    def test_same_task_send_row_hidden_from_secondary(self):
+        self.pair()
+        self.cfg['activewindow'] = self.cfg['clients'][1]
+        self.cfg['select_cancel'] = True
+        self.run_task('send')
+        # A cancelled menu is still recorded, without its current task row.
+        self.assertFalse(any(r.startswith('󰁌\tSend to "Planning"') for r in self.menu()))
+
+    def test_finish_from_secondary_closes_union(self):
+        self.pair()
+        self.finish_here()
+        self.assertEqual(self.cfg['clients'], [])
+        self.assertFalse((self.state / '3.json').exists())
+        self.assertIn('(2 screens)', self.menu()[0])
+        self.assertEqual(sum('window.close' in d for d in self.dispatches()), 2)
+
+    def test_finish_keep_returns_each_side_to_its_source(self):
+        self.pair()
+        self.finish_here(choice='Keep 2 windows and finish')
+        self.assertEqual({w['address']: w['workspace']['id'] for w in self.cfg['clients']}, {'0xabc': 2, '0xdef': 1})
+        self.assertFalse((self.state / '3.json').exists())
+
+    def test_finish_cancel_changes_nothing(self):
+        self.pair()
+        self.finish_here(choice='Cancel')
+        self.assertEqual(self.dispatches(), [])
+        self.assertTrue((self.state / '3.json').exists())
+
+    def test_finish_does_not_close_unreviewed_window(self):
+        self.pair()
+        extra = real_window('0x999', 'kitty', 'New dialog', 4, 'taskspaces-3-2')
+        self.cfg['menu_updates'] = {'clients': copy.deepcopy(self.cfg['clients']) + [extra]}
+        self.cfg['activeworkspace'] = self.cfg['workspaces'][-1]
+        self.cfg['select_first'] = False
+        self.cfg['selection'] = 'Close 2 windows and finish'
+        self.run_task('finish', expected=1)
+        self.assertEqual([w['address'] for w in self.cfg['clients']], ['0x999'])
+        self.assertTrue((self.state / '3.json').exists())
+
+    def test_finish_refused_close_retains_pair(self):
+        self.pair()
+        self.cfg['refuse_close'] = True
+        self.cfg['activeworkspace'] = self.cfg['workspaces'][-1]
+        self.cfg['select_first'] = False
+        self.cfg['selection'] = 'Close 2 windows and finish'
+        self.run_task('finish', expected=1)
+        self.assertEqual(len(self.cfg['clients']), 2)
+        self.assertTrue((self.state / '3.json').exists())
+
+    def test_unplug_go_merges_and_records_original_member(self):
+        self.pair()
+        self.unplug()
+        self.run_task('go')
+        self.assertEqual({w['workspace']['id'] for w in self.cfg['clients']}, {3})
+        self.assertEqual(self.saved()['merged_windows'][0]['member'], 4)
+        self.assertEqual(self.saved()['merged_windows'][0]['address'], '0xdef')
+
+    def test_unplug_external_only_uses_external_member(self):
+        self.pair()
+        self.unplug('HDMI-A-1')
+        self.run_task('go')
+        self.assertEqual({w['workspace']['id'] for w in self.cfg['clients']}, {4})
+        self.assertEqual(self.saved()['merged_windows'][0]['member'], 3)
+
+    def test_replug_go_splits_recorded_windows(self):
+        self.pair()
+        self.unplug()
+        self.run_task('go')
+        self.reconnect()
+        self.run_task('go')
+        self.assertEqual({w['address']: w['workspace']['id'] for w in self.cfg['clients']}, {'0xabc': 3, '0xdef': 4})
+        self.assertEqual(self.saved()['merged_windows'], [])
+        self.assertEqual(self.active(), {'eDP-1': 3, 'HDMI-A-1': 4})
+
+    def test_partial_merge_failure_keeps_recovery_intent_and_retry(self):
+        self.pair()
+        self.unplug()
+        self.cfg['fail_matching'] = 'address:0xdef'
+        self.run_task('go', expected=1)
+        self.assertEqual(self.saved()['merged_windows'][0]['member'], 4)
+        self.cfg.pop('fail_matching')
+        self.run_task('go')
+        self.assertEqual({w['workspace']['id'] for w in self.cfg['clients']}, {3})
+
+    def test_acknowledged_but_ineffective_merge_retains_recovery(self):
+        self.pair()
+        self.unplug()
+        self.cfg['ignore_moves'] = True
+        self.run_task('go', expected=1)
+        self.assertEqual(self.saved()['merged_windows'][0]['member'], 4)
+        self.assertEqual(self.cfg['clients'][1]['workspace']['id'], 4)
+
+    def test_partial_split_failure_retains_recovery_then_retries(self):
+        self.pair()
+        self.unplug()
+        self.run_task('go')
+        self.reconnect()
+        self.cfg['fail_matching'] = 'address:0xdef'
+        self.run_task('go', expected=1)
+        self.assertEqual(len(self.saved()['merged_windows']), 1)
+        self.cfg.pop('fail_matching')
+        self.run_task('go')
+        self.assertEqual(self.saved()['merged_windows'], [])
+
+    def test_split_does_not_fetch_window_moved_to_unrelated_workspace(self):
+        self.pair()
+        self.unplug()
+        self.run_task('go')
+        self.cfg['clients'][1]['workspace'] = {'id': 2, 'name': '2'}
+        self.reconnect()
+        self.run_task('go')
+        self.assertEqual(self.cfg['clients'][1]['workspace']['id'], 2)
+        self.assertEqual(self.saved()['merged_windows'], [])
+
+    def test_closed_merged_window_is_not_resurrected(self):
+        self.pair()
+        self.unplug()
+        self.run_task('go')
+        self.cfg['clients'].pop()
+        self.reconnect()
+        self.run_task('go')
+        self.assertEqual(len(self.cfg['clients']), 1)
+        self.assertEqual(self.saved()['merged_windows'], [])
+
+    def test_finish_merged_keep_uses_original_sources(self):
+        self.pair()
+        self.unplug()
+        self.run_task('go')
+        self.finish_here(3, 'Keep 2 windows and finish')
+        self.assertEqual({w['address']: w['workspace']['id'] for w in self.cfg['clients']}, {'0xabc': 2, '0xdef': 1})
+        self.assertFalse((self.state / '3.json').exists())
+
+    def test_paired_dry_run_never_writes_or_dispatches(self):
+        self.pair()
+        before = (self.state / '3.json').read_bytes()
+        self.run_task('go', '--dry-run')
+        self.assertEqual((self.state / '3.json').read_bytes(), before)
+        self.assertEqual(self.dispatches(), [])
+        self.assertFalse(any(a[0] == 'eval' for a in self.events('hyprctl')))
+        self.assertFalse((self.runtime / 'taskspaces.lock').exists())
+
+    def test_partial_finish_cleanup_can_retry(self):
+        self.pair()
+        self.cfg['activeworkspace'] = self.cfg['workspaces'][-1]
+        self.cfg['select_first'] = False
+        self.cfg['selection'] = 'Close 2 windows and finish'
+        self.cfg['fail_matching'] = 'hl.dsp.focus'
+        self.run_task('finish', expected=1)
+        self.assertTrue((self.state / '3.json').exists())
+        self.cfg.pop('fail_matching')
+        self.cfg['activeworkspace'] = next(w for w in self.cfg['workspaces'] if w['id'] == 4)
+        self.run_task('finish')
+        self.assertFalse((self.state / '3.json').exists())
+
+    def test_reused_window_address_does_not_receive_split(self):
+        self.pair()
+        self.unplug()
+        self.run_task('go')
+        self.cfg['clients'][1]['stableId'] = 'different-window'
+        self.reconnect()
+        self.run_task('go', expected=1)
+        self.assertEqual(len(self.saved()['merged_windows']), 1)
+        self.assertEqual(self.cfg['clients'][1]['workspace']['id'], 3)
+
+    def test_documented_command_symlink_finds_companion_helper(self):
+        self.pair()
+        self.write_cfg()
+        link = self.root / 'linked-taskspaces'
+        link.symlink_to(SCRIPT)
+        before = (self.state / '3.json').read_bytes()
+        result = subprocess.run([BASH, str(link), 'go', '--dry-run'], env=self.env,
+                                text=True, capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.state / '3.json').read_bytes(), before)
+        self.assertEqual(self.dispatches(), [])
 
 
 if __name__ == '__main__':

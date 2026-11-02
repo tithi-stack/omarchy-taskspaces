@@ -229,3 +229,48 @@ TestCase {
             result = subprocess.run([runner, '-input', str(test)], env=env,
                                     text=True, errors="replace", capture_output=True, timeout=15)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_each_screen_resolves_shared_name_from_its_actual_workspace(self):
+        runner = shutil.which('qmltestrunner') or '/usr/lib/qt6/bin/qmltestrunner'
+        if not Path(runner).exists():
+            self.skipTest('Qt QML test runner is not installed')
+        source = (ROOT / 'TaskLabel.qml').read_text()
+        resolver = re.search(r'  function taskForWorkspace\(workspace, labels\) \{.*?\n  \}', source, re.S)[0]
+        with tempfile.TemporaryDirectory(prefix='taskspaces-widget-') as folder:
+            test = Path(folder) / 'tst_members.qml'
+            test.write_text('''import QtQuick
+import QtTest
+TestCase {
+  name: "TaskMembers"
+''' + resolver + '''
+  function test_screen_truth() {
+    var labels = {
+      "3": {name: "Project plan", workspace_name: "taskspaces-3-1"},
+      "4": {name: "Project plan", workspace_name: "taskspaces-3-2"},
+      "5": {name: "Other task", workspace_name: "Other task"}
+    }
+    compare(taskForWorkspace({id: 3, name: "taskspaces-3-1"}, labels), "Project plan")
+    compare(taskForWorkspace({id: 4, name: "taskspaces-3-2"}, labels), "Project plan")
+    // A number-key switch changes only that screen's label.
+    compare(taskForWorkspace({id: 5, name: "Other task"}, labels), "Other task")
+    compare(taskForWorkspace({id: 1, name: "1"}, labels), "")
+    compare(taskForWorkspace({id: 4, name: "Unrelated"}, labels), "")
+    compare(taskForWorkspace({id: 4, name: "taskspaces-3-2"}, {}), "")
+    compare(taskForWorkspace(null, labels), "")
+    labels["3"].name = "Renamed plan"
+    compare(taskForWorkspace({id: 3, name: "taskspaces-3-1"}, labels), "Renamed plan")
+  }
+}
+''')
+            result = subprocess.run([runner, '-input', str(test)],
+                                    env=dict(os.environ, QT_QPA_PLATFORM='offscreen', XDG_RUNTIME_DIR=folder),
+                                    text=True, capture_output=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_label_query_is_read_only_and_screen_local(self):
+        source = (ROOT / 'TaskLabel.qml').read_text()
+        self.assertIn('Hyprland.monitorFor(window.screen)', source)
+        self.assertIn('monitor.activeWorkspace', source)
+        self.assertIn('"true",', source)
+        self.assertIn('"labels"]', source)
+        self.assertIn('interval: 1000', source)
