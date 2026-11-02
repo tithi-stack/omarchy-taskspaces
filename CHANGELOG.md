@@ -17,6 +17,8 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- Setup no longer rolls back a correct install on a Lua Hyprland config (Omarchy 4). Hyprland lists Lua shortcuts with the dispatcher `__lua` and a numeric id instead of the command, so setup now recognises its shortcuts by key, modifiers and the label it wrote, and still accepts `exec` shortcuts from older configs. The same test now backs the check after `setup --remove`, which previously could never detect a shortcut that was still loaded, and the check for an existing browser shortcut.
+- Setup treats the digit keys as taken under the modifiers of any `code:` shortcut, because Hyprland reports those with an empty key. The key-conflict menu names a Lua shortcut without a label as `another shortcut` instead of `__lua <id>`. `Esc`, `Prior` and `Next` count as the same keys as `Escape`, `Page_Up` and `Page_Down`.
 - Finish refreshes the task's windows after the menu, includes newly opened windows, and skips windows closed by hand. Windows disappearing during dispatch no longer interrupt cleanup or the success notification.
 - Tasks started from special workspaces record workspace 1 as their return destination. Tasks remember the starting workspace's number and name; if it disappears, changes name, or becomes another task, kept windows return to workspace 1. If workspace 1 also belongs to a task or has a custom name, they use the lowest unused workspace instead, and focus follows them.
 - Quotes and backslashes are removed from fallback app names before they appear in task labels, the finish app summary, or prompts.

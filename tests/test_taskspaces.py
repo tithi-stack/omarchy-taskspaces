@@ -88,6 +88,25 @@ elif cmd not in ('omarchy-notification-send', 'notify-send'): raise RuntimeError
 '''
 
 
+def real_window(address, cls, title, workspace_id, workspace_name):
+    """A client with every field `hyprctl clients -j` reports on Hyprland 0.56 (synthetic values)."""
+    return {'address': address, 'mapped': True, 'hidden': False, 'visible': True, 'acceptsInput': True,
+            'at': [10, 10], 'size': [800, 600], 'workspace': {'id': workspace_id, 'name': workspace_name},
+            'floating': False, 'monitor': 0, 'class': cls, 'title': title, 'initialClass': cls,
+            'initialTitle': title, 'pid': 4242, 'xwayland': False, 'pinned': False, 'pinFullscreened': False,
+            'fullscreen': 0, 'fullscreenClient': 0, 'fullscreenHandler': 'scrolling',
+            'allowedOverFullscreen': False, 'grouped': [], 'tags': [], 'swallowing': '0x0',
+            'focusHistoryID': 0, 'inhibitingIdle': False, 'xdgTag': '', 'xdgDescription': '',
+            'contentType': 'none', 'tearingHint': False, 'stableId': '18000000'}
+
+
+def real_workspace(workspace_id, name, windows=1):
+    """A workspace with every field `hyprctl workspaces -j` reports on Hyprland 0.56."""
+    return {'id': workspace_id, 'name': name, 'monitor': 'eDP-1', 'monitorID': 0, 'windows': windows,
+            'hasfullscreen': False, 'lastwindow': '0x0', 'lastwindowtitle': '', 'ispersistent': False,
+            'tiledLayout': 'scrolling'}
+
+
 class TaskTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='taskspaces-test-')
@@ -155,6 +174,48 @@ class TaskTests(unittest.TestCase):
     def assert_no_effect(self):
         self.assertEqual(self.dispatches(), [])
         self.assertEqual(list(self.state.iterdir()), [])
+
+    def use_real_shapes(self, windows):
+        self.cfg['clients'] = windows
+        self.cfg['activewindow'] = copy.deepcopy(windows[0])
+        self.cfg['workspaces'] = [real_workspace(1, '1'), real_workspace(2, '2', 0)]
+        self.cfg['activeworkspace'] = real_workspace(windows[0]['workspace']['id'], windows[0]['workspace']['name'])
+
+    def test_real_hyprland_shapes_work_for_send_and_finish(self):
+        self.use_real_shapes([real_window('0xabc', 'com.mitchellh.ghostty', 'Fix login bug', 1, '1'),
+                              real_window('0xdef', 'google-chrome', 'Docs - Google Chrome', -98, 'special:scratchpad')])
+        self.cfg['selection'] = 'Start task "Fix login bug"\tname suggested from the window title'
+        self.run_task('send')
+        self.assertEqual(self.dispatches()[-2:], [
+            'hl.dsp.window.move({ window = "address:0xabc", workspace = "3", follow = true })',
+            'hl.dsp.workspace.rename({ workspace = "3", name = "Fix login bug" })'])
+        self.cfg['clients'][0]['workspace'] = {'id': 3, 'name': 'Fix login bug'}
+        self.cfg['workspaces'] += [real_workspace(3, 'Fix login bug')]
+        self.cfg['activeworkspace'] = real_workspace(3, 'Fix login bug')
+        self.cfg['selection'] = 'Keep 1 window and finish'
+        self.run_task('finish')
+        self.assertIn('󰐃\tKeep 1 window and finish\treturns to workspace 1 · nothing is closed', self.menu())
+        self.assertEqual(self.dispatches()[-2:], [
+            'hl.dsp.window.move({ window = "address:0xabc", workspace = "1", follow = false })',
+            'hl.dsp.focus({ workspace = "1" })'])
+        self.assertFalse((self.state / '3.json').exists())
+
+    def test_real_hyprland_window_on_special_workspace_is_sent_and_returns_to_one(self):
+        self.use_real_shapes([real_window('0xabc', 'kitty', 'Scratch', -98, 'special:scratchpad')])
+        self.cfg['workspaces'].append(real_workspace(-98, 'special:scratchpad'))
+        self.cfg['selection'] = 'Start task "Scratch"\tname suggested from the window title'
+        self.run_task('send')
+        record = json.loads((self.state / '3.json').read_text())
+        self.assertEqual((record['source'], record['source_name']), (1, '1'))
+        self.assertFalse(any('Turn workspace' in row for row in self.menu()))
+
+    def test_real_hyprland_empty_active_window_reports_nothing_focused(self):
+        # With no window open, `hyprctl activewindow -j` prints an empty object.
+        self.cfg['activewindow'] = {}
+        self.run_task('send')
+        self.assert_no_effect()
+        self.assertEqual(self.events('omarchy-menu-select'), [])
+        self.assertTrue(any('No window focused' in ' '.join(args) for args in self.events('omarchy-notification-send')))
 
     def test_menu_plain_position_before_tasks_and_workspaces(self):
         self.cfg['selection'] = 'Cancel'

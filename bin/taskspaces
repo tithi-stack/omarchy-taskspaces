@@ -420,6 +420,11 @@ ORDER = ('SUPER', 'CTRL', 'SHIFT', 'ALT')
 DESCRIPTIONS = {'send': 'Send window to task', 'silent': 'Send window to task (stay here)',
                 'finish': 'Finish task', 'browser': 'New browser window here'}
 COMMANDS = {'send': 'send', 'silent': 'send --silent', 'finish': 'finish', 'browser': 'browser'}
+COMMAND_DESCRIPTIONS = {COMMANDS[action]: DESCRIPTIONS[action] for action in COMMANDS}
+# Different spellings of keys setup can choose. Hyprland reports a key as written.
+KEY_ALIASES = {'ESC': 'ESCAPE', 'PRIOR': 'PAGE_UP', 'PAGEUP': 'PAGE_UP',
+               'NEXT': 'PAGE_DOWN', 'PAGEDOWN': 'PAGE_DOWN'}
+DIGITS = '0123456789'
 CANDIDATES = {'send': ('SUPER + SHIFT + N', 'SUPER + CTRL + N', 'SUPER + T'),
               'finish': ('SUPER + SHIFT + D', 'SUPER + CTRL + D', 'SUPER + E'),
               'browser': ('SUPER + ALT + W', 'SUPER + ALT + C')}
@@ -548,7 +553,7 @@ def parse_key(text):
     parts = [part.strip().upper() for part in text.split('+')]
     if len(parts) < 2 or len(set(parts)) != len(parts):
         raise ValueError('Include modifiers and one key, such as SUPER + SHIFT + D.')
-    key = parts[-1]
+    key = KEY_ALIASES.get(parts[-1], parts[-1])
     if any(part not in MODS for part in parts[:-1]):
         raise ValueError('Use SUPER, CTRL, ALT or SHIFT before the key.')
     if not re.fullmatch(r'[A-Z0-9]|F(?:[1-9]|[12][0-9]|3[0-5])|RETURN|SPACE|TAB|ESCAPE|'
@@ -578,7 +583,10 @@ def binds():
 
 
 def bind_key(bind):
-    return bind['modmask'], bind['key'].upper()
+    # Hyprland reports the key as it was written in the config (stock files mix
+    # RETURN, Home and comma), so compare in upper case.
+    key = bind['key'].upper()
+    return bind['modmask'], KEY_ALIASES.get(key, key)
 
 
 def lua_binds(text):
@@ -636,9 +644,18 @@ def menu(title, rows):
 def choose_key(wanted, action, selected, stock):
     def occupied():
         used = dict(stock)
-        for bind in binds():
-            used[bind_key(bind)] = clean(bind.get('description') or
-                                        (bind['dispatcher'] + ' ' + bind['arg']), 45)
+        live = binds()
+        for bind in live:
+            # A Lua shortcut's arg is only an id; the command text is not available.
+            label = bind.get('description') if isinstance(bind.get('description'), str) else ''
+            fallback = 'another shortcut' if bind['dispatcher'] == '__lua' else bind['dispatcher'] + ' ' + bind['arg']
+            used[bind_key(bind)] = clean(label or fallback, 45)
+        for bind in live:
+            # Hyprland lists a code:NN shortcut with an empty key and no keycode, so
+            # every digit under those modifiers may already be taken.
+            if bind['key'] == '':
+                for digit in DIGITS:
+                    used.setdefault((bind['modmask'], digit), clean(bind.get('description') or 'another shortcut', 45))
         used.update({key: 'another Taskspaces shortcut' for key in selected.values()})
         return used
     used = occupied()
@@ -749,11 +766,24 @@ def config_errors():
                                if line.strip())
 
 
-def is_helper(bind, helper, action):
-    try:
-        return bind['dispatcher'] == 'exec' and shlex.split(bind['arg']) == [str(helper), *action.split()]
-    except ValueError:
+def is_ours(bind, helper, command, key=None):
+    # One test for every place a live shortcut is matched. Older and non-Lua configs
+    # list an exec shortcut whose arg is the command. A Lua config lists dispatcher
+    # __lua with an id in arg, so the label setup wrote is the only thing to compare.
+    if key is not None and bind_key(bind) != key:
         return False
+    if bind['dispatcher'] == 'exec':
+        try:
+            return shlex.split(bind['arg']) == [str(helper), *command.split()]
+        except ValueError:
+            return False
+    return bind['dispatcher'] == '__lua' and bind.get('description') == COMMAND_DESCRIPTIONS.get(command)
+
+
+def is_browser_bind(bind):
+    if bind['dispatcher'] == 'exec':
+        return runs_browser(bind['arg'])
+    return bind['dispatcher'] == '__lua' and bind.get('description') == COMMAND_DESCRIPTIONS['browser']
 
 
 def setup():
@@ -800,8 +830,7 @@ def setup():
             raise SetupError('Cannot read live shortcuts: hyprctl is missing; run setup in your desktop session.')
         live = binds()
         if not remove:
-            browser_keys = [key_text(bind_key(bind), True) for bind in live
-                            if bind['dispatcher'] == 'exec' and runs_browser(bind['arg'])]
+            browser_keys = [key_text(bind_key(bind), True) for bind in live if is_browser_bind(bind)]
             if browser_keys:
                 message('Already set up: ' + ', '.join(key + ' browser' for key in browser_keys) + '.')
                 return
@@ -889,10 +918,10 @@ def setup():
             if remove:
                 for raw_key, action, _ in installed_keys(block):
                     key = parse_key(raw_key)
-                    if any(bind_key(bind) == key and is_helper(bind, helper, action) for bind in live):
+                    if any(is_ours(bind, helper, action, key) for bind in live):
                         raise SetupError('Hyprland still shows a removed Taskspaces shortcut.')
-            elif any(not any(bind_key(bind) == key and is_helper(bind, helper, COMMANDS[action])
-                             for bind in live) for action, key in selected.items()):
+            elif any(not any(is_ours(bind, helper, COMMANDS[action], key) for bind in live)
+                     for action, key in selected.items()):
                 raise SetupError('Hyprland did not load every selected Taskspaces shortcut.')
         except SetupError as error:
             if bindings_file.resolve() != target or target.read_bytes() != updated:

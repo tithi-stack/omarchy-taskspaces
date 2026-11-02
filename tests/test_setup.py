@@ -30,6 +30,14 @@ cmd, args = Path(sys.argv[0]).name, sys.argv[1:]
 with (root / 'events.jsonl').open('a') as out:
     out.write(json.dumps([cmd, args]) + '\n')
 def save(): file.write_text(json.dumps(cfg))
+def lua_bind(mask, key, description, serial):
+    # Synthetic values, same fields and types as `hyprctl binds -j` on a Lua config:
+    # the dispatcher is __lua and arg is an id, never the command text.
+    return {'locked': False, 'mouse': False, 'release': False, 'repeat': False, 'longPress': False,
+            'non_consuming': False, 'auto_consuming': False, 'has_description': bool(description),
+            'modmask': mask, 'submap': '', 'submap_universal': 'false', 'key': key, 'keycode': 0,
+            'catch_all': False, 'description': description, 'allow_input_capture': False,
+            'dispatcher': '__lua', 'arg': str(serial)}
 if cmd == 'hyprctl':
     if args == ['binds', '-j']:
         if cfg.get('bad_binds'):
@@ -40,14 +48,24 @@ if cmd == 'hyprctl':
             text = Path(os.environ['TASKSPACES_BINDINGS_FILE']).read_text()
             if 'local taskspaces_bin = ' in text and '-- >>> taskspaces' in text:
                 helper = json.loads(re.search(r'local taskspaces_bin = (.+)', text)[1])
-                for key, action in re.findall(r'o.bind\("([^"]+)", "[^"]+", taskspaces_bin \.\. " (send(?: --silent)?|finish|browser)"\)', text):
+                pattern = r'o.bind\("([^"]+)", "([^"]+)", taskspaces_bin \.\. " (send(?: --silent)?|finish|browser)"\)'
+                for serial, (key, description, action) in enumerate(re.findall(pattern, text), 301):
                     if action == 'browser' and cfg.get('missing_browser'): continue
                     mods = {'SUPER':64, 'CTRL':4, 'ALT':8, 'SHIFT':1}
                     parts = key.split(' + ')
-                    binds.append({'modmask':sum(mods[m] for m in parts[:-1]), 'key':parts[-1].lower(),
-                                  'dispatcher':'exec', 'arg': helper + ' ' + action})
+                    mask = sum(mods[m] for m in parts[:-1])
+                    if cfg.get('legacy_exec'):
+                        # Older and non-Lua configs: the dispatcher is exec and arg is the command.
+                        binds.append({'modmask':mask, 'key':parts[-1].lower(),
+                                      'dispatcher':'exec', 'arg': helper + ' ' + action})
+                    else:
+                        binds.append(lua_bind(mask, parts[-1], description, serial))
+        if cfg.get('stale_binds') and cfg.get('reloaded'):
+            binds.extend(cfg['stale_binds'])
         if cfg.get('wrong_helper') and cfg.get('reloaded'):
-            for bind in binds: bind['arg'] = '/other/taskspaces send'
+            for bind in binds:
+                bind['arg'] = '/other/taskspaces send'
+                bind['description'] = 'Another program'
         print(json.dumps(binds))
     elif args == ['reload']:
         cfg['reloaded'] = cfg.get('reloaded', 0) + 1
@@ -88,8 +106,33 @@ elif cmd not in ('omarchy-notification-send', 'notify-send'): raise RuntimeError
 '''
 
 
+_serial = [100]
+
+
 def bind(mask, key, description='Open launcher', **fields):
-    return dict(modmask=mask, key=key, description=description, dispatcher='exec', arg='launcher', **fields)
+    """A live shortcut in the shape Hyprland reports for a Lua config."""
+    _serial[0] += 2
+    return dict(locked=False, mouse=False, release=False, repeat=False, longPress=False,
+                non_consuming=False, auto_consuming=False, has_description=bool(description),
+                modmask=mask, submap='', submap_universal='false', key=key, keycode=0,
+                catch_all=False, description=description, allow_input_capture=False,
+                dispatcher='__lua', arg=str(_serial[0]), **fields)
+
+
+def legacy_bind(mask, key, description='Open launcher', arg='launcher'):
+    """The shape of an older or non-Lua config: dispatcher exec, arg is the command."""
+    return dict(modmask=mask, key=key, description=description, dispatcher='exec', arg=arg)
+
+
+def setup_namespace():
+    """Run only the definitions of the embedded setup program, never its entry point."""
+    text = SCRIPT.read_text()
+    body = text[text.index('desktop_task() {'):]
+    body = body[body.index("<<'PY'\n") + len("<<'PY'\n"):]
+    body = body[:body.index('\ntry:\n    if sys.argv[2]')]
+    namespace = {'__name__': 'taskspaces_setup'}
+    exec(compile(body, 'taskspaces-setup', 'exec'), namespace)
+    return namespace
 
 
 class SetupTests(unittest.TestCase):
@@ -280,7 +323,12 @@ class SetupTests(unittest.TestCase):
         self.cfg = {'binds': [bind(64, 'D', description='\n"Bad\x1b\tname"')], 'choices': ['Skip', 'No']}
         self.run_setup()
         self.assertEqual(self.events('omarchy-menu-select')[0][0], 'Super+D is already used by "Bad name"')
+        # A Lua shortcut has no command text to show: arg is only an id.
         self.cfg = {'binds': [bind(64, 'D', description='')], 'choices': ['Skip', 'No']}
+        self.run_setup()
+        self.assertEqual(self.events('omarchy-menu-select')[-2][0],
+                         'Super+D is already used by "another shortcut"')
+        self.cfg = {'binds': [legacy_bind(64, 'D', description='')], 'choices': ['Skip', 'No']}
         self.run_setup()
         self.assertIn('exec launcher', self.events('omarchy-menu-select')[-2][0])
 
@@ -650,7 +698,8 @@ class SetupTests(unittest.TestCase):
                 (START + '\n' + MANUAL + browser_line + END + '\n', [], 'SUPER + F8'),
                 (MANUAL + browser_line, [], 'SUPER + F8'),
                 ('o.bind("SUPER + F9", "Browser", "taskspaces browser")\n', [], 'SUPER + F9'),
-                (ORIGINAL, [dict(modmask=64, key='F10', dispatcher='exec', arg=str(SCRIPT) + ' browser')], 'Super+F10')):
+                (ORIGINAL, [legacy_bind(64, 'F10', arg=str(SCRIPT) + ' browser')], 'Super+F10'),
+                (ORIGINAL, [bind(64, 'F11', description='New browser window here')], 'Super+F11')):
             with self.subTest(key=key, text=text):
                 self.bindings.write_text(text)
                 self.cfg = {'binds': live}
@@ -690,6 +739,139 @@ class SetupTests(unittest.TestCase):
         result = self.run_setup(expected=1)
         self.assertIn('just taken', result.stderr)
         self.unchanged()
+
+    # The shape real Hyprland reports for a Lua config: dispatcher __lua, arg is an id,
+    # the label is in description. Earlier mocks reported exec with the command in arg,
+    # so setup rolled back a correct install on every real desktop.
+    def test_lua_config_shortcuts_are_recognised_after_reload(self):
+        result = self.run_setup()
+        self.assertIn('Ready:', result.stderr)
+        self.assertNotIn('did not load', result.stderr)
+        self.assertEqual(self.cfg['reloaded'], 1)
+        self.assertIn(START, self.bindings.read_text())
+
+    def test_lua_config_browser_shortcut_is_recognised_after_reload(self):
+        self.support_browser()
+        self.cfg['choices'] = ['Add a "new browser window here" shortcut', 'Yes']
+        result = self.run_setup()
+        self.assertIn('Super+Alt+B opens a new browser window here', result.stderr)
+        self.assertEqual(self.cfg['reloaded'], 1)
+
+    def test_legacy_exec_shortcuts_are_still_recognised(self):
+        self.support_browser()
+        self.cfg = {'legacy_exec': True, 'choices': ['Add a "new browser window here" shortcut', 'Yes']}
+        result = self.run_setup()
+        self.assertIn('Ready:', result.stderr)
+        self.assertEqual(self.cfg['reloaded'], 1)
+        self.cfg['choices'] = ['Remove']
+        self.run_setup('--remove')
+        self.assertEqual(self.bindings.read_text(), ORIGINAL)
+
+    def test_lua_shortcut_with_a_different_description_is_not_ours(self):
+        for stale in ('wrong_helper', 'missing_loaded'):
+            with self.subTest(stale=stale):
+                self.bindings.write_text(ORIGINAL)
+                self.cfg = {stale: True, 'choices': ['Yes']}
+                self.assertIn('did not load every selected', self.run_setup(expected=1).stderr)
+                self.assertEqual(self.bindings.read_text(), ORIGINAL)
+
+    def test_remove_checks_the_live_shortcuts_for_real(self):
+        for shape in ('lua', 'legacy'):
+            with self.subTest(shape=shape):
+                self.bindings.write_text(ORIGINAL)
+                self.cfg = {'choices': ['Yes']}
+                self.run_setup()
+                before = self.bindings.read_bytes()
+                if shape == 'lua':
+                    stale = [bind(64, 'N', 'Send window to task'), bind(64, 'D', 'Finish task')]
+                else:
+                    stale = [legacy_bind(64, 'n', arg=str(SCRIPT) + ' send')]
+                self.cfg = {'choices': ['Remove'], 'stale_binds': stale, 'legacy_exec': shape == 'legacy'}
+                result = self.run_setup('--remove', expected=1)
+                self.assertIn('still shows a removed Taskspaces shortcut', result.stderr)
+                self.assertIn('restored and reloaded', result.stderr)
+                self.assertEqual(self.bindings.read_bytes(), before)
+
+    def test_remove_ignores_other_shortcuts_on_the_same_keys(self):
+        self.run_setup()
+        # Same description on a different key, or another label on the same key, is not ours.
+        other = [bind(64, 'E', 'Finish task'), bind(65, 'N', 'Send window to task'),
+                 bind(64, 'N', 'Something else')]
+        self.cfg = {'choices': ['Remove'], 'stale_binds': other}
+        self.run_setup('--remove')
+        self.assertEqual(self.bindings.read_text(), ORIGINAL)
+
+    def test_live_browser_shortcut_detection_for_lua_config(self):
+        self.support_browser()
+        for live, found in (([bind(64, 'F11', 'New browser window here')], True),
+                            ([bind(64, 'F11', 'Browser (new window here)')], False),
+                            ([bind(64, 'F11', 'Finish task')], False)):
+            with self.subTest(live=live):
+                self.bindings.write_text(ORIGINAL)
+                self.cfg = {'binds': live, 'choices': ['Not now', 'Yes']}
+                result = self.run_setup()
+                self.assertEqual('Already set up' in result.stderr, found)
+
+    def test_is_ours_predicate(self):
+        ours = setup_namespace()['is_ours']
+        helper = Path('/opt/plugin/bin/taskspaces')
+        lua = bind(72, 'N', 'Send window to task (stay here)')
+        self.assertTrue(ours(lua, helper, 'send --silent', (72, 'N')))
+        self.assertTrue(ours(lua, helper, 'send --silent'))
+        self.assertFalse(ours(lua, helper, 'send --silent', (72, 'M')))
+        self.assertFalse(ours(lua, helper, 'send --silent', (64, 'N')))
+        self.assertFalse(ours(lua, helper, 'send', (72, 'N')))
+        self.assertFalse(ours(dict(lua, description=''), helper, 'send --silent', (72, 'N')))
+        self.assertFalse(ours(dict(lua, description=None), helper, 'send --silent', (72, 'N')))
+        self.assertFalse(ours({k: v for k, v in lua.items() if k != 'description'}, helper, 'send --silent'))
+        self.assertFalse(ours(dict(lua, dispatcher='exec', arg='1'), helper, 'send --silent', (72, 'N')))
+        legacy = legacy_bind(64, 'n', arg="/opt/plugin/bin/taskspaces send")
+        self.assertTrue(ours(legacy, helper, 'send', (64, 'N')))
+        self.assertFalse(ours(legacy, helper, 'finish', (64, 'N')))
+        self.assertFalse(ours(dict(legacy, arg='/other/taskspaces send'), helper, 'send', (64, 'N')))
+        self.assertFalse(ours(dict(legacy, arg="'unterminated send"), helper, 'send', (64, 'N')))
+        spaced = legacy_bind(64, 'n', arg="'/opt/my plugin/bin/taskspaces' send")
+        self.assertTrue(ours(spaced, Path('/opt/my plugin/bin/taskspaces'), 'send', (64, 'N')))
+        # A legacy match needs the right command even when the description is ours.
+        self.assertFalse(ours(dict(legacy, description='Send window to task', arg='launcher'),
+                              helper, 'send', (64, 'N')))
+
+    def test_every_key_setup_accepts_matches_what_hyprland_reports(self):
+        space = setup_namespace()
+        parse_key, bind_key = space['parse_key'], space['bind_key']
+        names = (list('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789') + ['F%d' % n for n in range(1, 36)] +
+                 'RETURN SPACE TAB ESCAPE LEFT RIGHT UP DOWN HOME END PAGE_UP PAGE_DOWN INSERT DELETE BACKSPACE'.split())
+        for name in names:
+            for mods, mask in (('SUPER + ALT', 72), ('SUPER + CTRL + SHIFT', 69), ('ALT', 8)):
+                chosen = parse_key(mods + ' + ' + name)
+                self.assertEqual(chosen[0], mask)
+                # Hyprland reports the key as written; stock files spell some of them
+                # in title case or lower case.
+                for spelling in (name, name.lower(), name.title()):
+                    with self.subTest(name=name, spelling=spelling):
+                        self.assertEqual(bind_key(bind(mask, spelling)), chosen)
+
+    def test_masks_match_the_captured_modifier_bits(self):
+        mods = setup_namespace()['MODS']
+        self.assertEqual((mods['SUPER'], mods['SHIFT'], mods['CTRL'], mods['ALT']), (64, 1, 4, 8))
+        self.assertEqual(setup_namespace()['parse_key']('SUPER + ALT + RETURN'), (72, 'RETURN'))
+
+    def test_keycode_shortcuts_reserve_digit_keys(self):
+        # Hyprland reports a code:NN shortcut with an empty key and no usable keycode,
+        # so a digit under the same modifiers may already be taken.
+        self.cfg = {'binds': [bind(64, '', 'Switch to workspace 1'), bind(64, 'D')],
+                    'choices': ['Pick', 'Yes'], 'inputs': ['SUPER + 3', 'SUPER + SHIFT + 3', 'SUPER + F6']}
+        result = self.run_setup()
+        self.assertIn('SUPER + SHIFT + 3', self.bindings.read_text())
+        self.assertEqual(len(self.events('omarchy-menu-input')), 2)
+        self.assertIn('already used', result.stderr)
+
+    def test_alias_key_names_are_the_same_key(self):
+        space = setup_namespace()
+        parse_key, bind_key = space['parse_key'], space['bind_key']
+        for alias, canonical in (('ESC', 'ESCAPE'), ('Prior', 'PAGE_UP'), ('Next', 'PAGE_DOWN')):
+            self.assertEqual(bind_key(bind(64, alias)), parse_key('SUPER + ' + canonical))
+            self.assertEqual(parse_key('SUPER + ' + alias), parse_key('SUPER + ' + canonical))
 
     def test_non_newline_file_is_separated_from_block(self):
         self.bindings.write_text('-- no final newline')
