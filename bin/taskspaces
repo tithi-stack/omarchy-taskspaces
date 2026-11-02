@@ -197,7 +197,9 @@ rename_task() {
   notify_workspace_name "Renamed task: $name" "$source" "$warn_empty"
 }
 first_free() {
-  jq -r --argjson tasks "${tasks:-[]}" '[(.[] | .id), ($tasks[] | .members[].id) | select(. > 0)] as $used | first(range(1; ($used | length) + 2) | select(. as $id | $used | index($id) | not))' <<< "$workspaces"
+  local base=${1:-}
+  if [[ -z $base ]]; then base=$(member_tool first-workspace); fi
+  jq -r --argjson base "$base" --argjson tasks "${tasks:-[]}" '[(.[] | .id), ($tasks[] | .members[].id) | select(. > 0)] as $used | first(range($base; $base + ($used | length) + 1) | select(. as $id | $used | index($id) | not))' <<< "$workspaces"
 }
 make_workspace_task() {
   local source=$1 cls=$2 warn_empty=${3:-false} name workspaces pending
@@ -470,7 +472,7 @@ finish_destination() {
     printf '1\n'
   else
     # Even the fallback may belong to another task. Use a free workspace then.
-    first_free
+    first_free 1
   fi
 }
 finish_success() {

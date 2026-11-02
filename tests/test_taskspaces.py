@@ -2283,6 +2283,64 @@ class AllocationBaseTests(unittest.TestCase):
                          ('integer', 1, 50, 1, 6))
         self.assertEqual(widget['defaults']['firstTaskWorkspace'], 6)
 
+    def test_no_shell_config_allocates_single_screen_task_at_six(self):
+        (self.root / 'config/omarchy/shell.json').unlink()
+        self.cfg['select_first'] = True
+        self.run_task('send')
+        self.assertEqual(json.loads((self.state / '6.json').read_text())['id'], 6)
+        self.assertEqual(self.cfg['clients'][0]['workspace']['id'], 6)
+
+    def test_single_screen_allocation_respects_custom_base_and_existing_workspace(self):
+        self.set_settings(first=12)
+        self.cfg['select_first'] = True
+        self.cfg['workspaces'].append(real_workspace(12, '12', 0))
+        self.run_task('send')
+        self.assertTrue((self.state / '13.json').exists())
+        self.assertEqual(next(w for w in self.cfg['workspaces'] if w['id'] == 12)['name'], '12')
+
+    def test_free_numbers_below_base_are_never_allocated(self):
+        self.set_settings(first=6)
+        scratch = real_workspace(-98, 'special:scratchpad')
+        self.cfg['workspaces'] = [scratch]
+        self.cfg['activeworkspace'] = copy.deepcopy(scratch)
+        win = real_window('0xabc', 'kitty', 'Scratch', -98, 'special:scratchpad')
+        self.cfg['clients'] = [win]
+        self.cfg['activewindow'] = copy.deepcopy(win)
+        self.cfg['select_first'] = True
+        self.run_task('send')
+        self.assertTrue((self.state / '6.json').exists())
+        self.assertEqual({w['id'] for w in self.cfg['workspaces']}, {-98, 6})
+
+    def test_finish_fallback_still_uses_low_desktop_slots(self):
+        self.set_settings(first=6)
+        self.cfg['workspaces'] = [real_workspace(1, 'Other task', 0), real_workspace(2, 'Planning')]
+        self.cfg['activeworkspace'] = copy.deepcopy(self.cfg['workspaces'][1])
+        self.cfg['selection'] = 'Keep 1 window and finish'
+        (self.state / '1.json').write_text(json.dumps(dict(id=1, name='Other task', source=4)))
+        (self.state / '2.json').write_text(json.dumps(dict(id=2, name='Planning', source=9)))
+        self.run_task('finish')
+        self.assertEqual(self.cfg['clients'][0]['workspace']['id'], 3)
+        self.assertFalse((self.state / '2.json').exists())
+        self.assertTrue((self.state / '1.json').exists())
+
+    def test_adopt_workspace_three_and_keep_preserve_its_number(self):
+        self.set_settings(first=6)
+        ws = real_workspace(3, '3')
+        self.cfg['workspaces'].append(ws)
+        self.cfg['activeworkspace'] = copy.deepcopy(ws)
+        self.cfg['activewindow']['workspace'] = {'id': 3, 'name': '3'}
+        self.cfg['clients'] = [copy.deepcopy(self.cfg['activewindow'])]
+        self.run_task('send')
+        record = json.loads((self.state / '3.json').read_text())
+        self.assertNotIn('members', record)
+        self.assertEqual(self.cfg['clients'][0]['workspace']['id'], 3)
+        self.cfg['activeworkspace'] = {'id': 3, 'name': 'Planning'}
+        self.cfg['selection'] = 'Keep 1 window and finish'
+        self.run_task('finish')
+        self.assertFalse((self.state / '3.json').exists())
+        self.assertEqual(next(w['name'] for w in self.cfg['workspaces'] if w['id'] == 3), '3')
+        self.assertEqual(self.cfg['clients'][0]['workspace']['id'], 3)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
