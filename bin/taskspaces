@@ -144,8 +144,16 @@ dedupe() {
   done
   printf '%s\n' "$name"
 }
+notify_workspace_name() {
+  local message=$1 source=$2 warn_empty=$3
+  if $warn_empty && jq -e --argjson id "$source" \
+    'any(.[]; .id == $id and .windows == 0 and .ispersistent != true)' <<< "$workspaces" >/dev/null; then
+    message+=' · open a window before leaving or this name will be lost'
+  fi
+  notify "$message"
+}
 rename_task() {
-  local source=$1 cls=$2 record=$3 name workspaces pending
+  local source=$1 cls=$2 record=$3 warn_empty=${4:-false} name workspaces pending live_workspaces
   name=$(omarchy-menu-input 'Task name') || return 0
   [[ -n ${name//[[:space:]]/} ]] || return 0
   name=$(name_value sanitize "$cls" "$name")
@@ -154,6 +162,7 @@ rename_task() {
   workspaces=$(hyprctl workspaces -j)
   jq -e --argjson id "$source" --arg name "$(jq -r .name <<< "$record")" \
     'any(.[]; .id == $id and .name == $name)' <<< "$workspaces" >/dev/null || return 0
+  live_workspaces=$workspaces
   workspaces=$(jq -c --argjson id "$source" '[.[] | select(.id != $id)]' <<< "$workspaces")
   name=$(dedupe "$name")
   if ! $dry; then
@@ -165,13 +174,14 @@ rename_task() {
     return 1
   fi
   if ! $dry; then mv -- "$pending" "$state_dir/$source.json"; fi
-  notify "Renamed task: $name"
+  workspaces=$live_workspaces
+  notify_workspace_name "Renamed task: $name" "$source" "$warn_empty"
 }
 first_free() {
   jq -r '[.[] | .id | select(. > 0)] as $used | first(range(1; ($used | length) + 2) | select(. as $id | $used | index($id) | not))' <<< "$workspaces"
 }
 make_workspace_task() {
-  local source=$1 cls=$2 name workspaces pending
+  local source=$1 cls=$2 warn_empty=${3:-false} name workspaces pending
   name=$(omarchy-menu-input 'Task name') || return 0
   [[ -n ${name//[[:space:]]/} ]] || return 0
   name=$(name_value sanitize "$cls" "$name")
@@ -192,7 +202,7 @@ make_workspace_task() {
     return 1
   fi
   if ! $dry; then mv -- "$pending" "$state_dir/$source.json"; fi
-  notify "Started task \"$name\""
+  notify_workspace_name "Started task \"$name\"" "$source" "$warn_empty"
 }
 # Share the finish menu's app summary with task and plain-workspace lists.
 window_summary() {
@@ -276,13 +286,54 @@ plain_workspace_destinations() {
        | (first($live[] | select(.id == $id)) // {id:$id, name:($id | tostring)})]
   ' <<< "$workspaces"
 }
+empty_workspace_task() {
+  local workspace source source_record selection action
+  local adopt=$'Turn this workspace into a task…\tname this empty workspace'
+  local rename=$'Rename this task…\tchange this empty task name'
+  local go=$'Go to a task…\tswitch to another task'
+  local -a rows=()
+  workspace=$(hyprctl activeworkspace -j)
+  source=$(jq -er '.id | select(type == "number" and . > 0)' <<< "$workspace") || { go_task; return; }
+  workspaces=$(hyprctl workspaces -j)
+  prune
+  # Only offer naming for a captured, live empty workspace. Special, custom-named
+  # and unrecognised workspaces keep the existing navigation fallback.
+  if ! jq -e --argjson workspace "$workspace" \
+    'any(.[]; .id == $workspace.id and .name == $workspace.name and .windows == 0)' <<< "$workspaces" >/dev/null; then
+    go_task; return
+  fi
+  source_record=$(jq -c --argjson id "$source" 'first(.[] | select(.id == $id)) // empty' <<< "$tasks")
+  if [[ -n $source_record ]]; then
+    action=$rename
+    rows+=("$(printf '󰏫\t%s' "$rename")")
+  elif [[ $(jq -r .name <<< "$workspace") == "$source" && ! -e $state_dir/$source.json ]]; then
+    action=$adopt
+    rows+=("$(printf '󰉗\t%s' "$adopt")")
+  else
+    go_task; return
+  fi
+  if jq -e --argjson id "$source" 'any(.[]; .id != $id)' <<< "$tasks" >/dev/null; then
+    rows+=("$(printf '󰉒\t%s' "$go")")
+  fi
+  if $dry; then
+    printf 'Task menu: %s\n' "${rows[@]}"
+    return
+  fi
+  selection=$(omarchy-menu-select 'Task' "${rows[@]}" -- --width 600) || return 0
+  if [[ $selection == "$go" && ${#rows[@]} -gt 1 ]]; then
+    go_task
+  elif [[ $selection == "$action" ]]; then
+    if [[ -n $source_record ]]; then rename_task "$source" '' "$source_record" true
+    else make_workspace_task "$source" '' true; fi
+  fi
+}
 send_task() {
   local window address cls title source return_source source_name suggested selection target name record candidate plain_workspaces plain_target=false started=false
   if [[ -n $requested_address ]]; then
     window=$(hyprctl clients -j | jq -c --arg address "$requested_address" 'first(.[] | select(.address == $address and .mapped != false)) // {}')
   else window=$(hyprctl activewindow -j); fi
   address=$(jq -r '.address // empty' <<< "$window")
-  if [[ ! $address =~ ^0x[0-9a-fA-F]+$ ]]; then go_task; return; fi
+  if [[ ! $address =~ ^0x[0-9a-fA-F]+$ ]]; then empty_workspace_task; return; fi
   cls=$(jq -r '.class // ""' <<< "$window")
   title=$(jq -r '.title // ""' <<< "$window")
   source=$(jq -er '.workspace.id | select(type == "number")' <<< "$window")

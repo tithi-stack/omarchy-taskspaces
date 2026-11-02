@@ -222,6 +222,139 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(self.events('omarchy-menu-select'), [])
         self.assertTrue(any('No tasks yet' in ' '.join(args) for args in self.events('omarchy-notification-send')))
 
+    def empty_workspace(self):
+        self.cfg['activewindow'] = {}
+        self.cfg['clients'] = []
+        workspace = real_workspace(2, '2', 0)
+        self.cfg['activeworkspace'] = copy.deepcopy(workspace)
+        self.cfg['workspaces'] = [real_workspace(1, '1', 0), workspace]
+
+    def test_empty_plain_workspace_can_be_named_without_moving(self):
+        self.empty_workspace()
+        self.cfg['selection'] = 'Turn this workspace into a task…\tname this empty workspace'
+        self.run_task('send')
+        self.assertEqual(self.menu(), [
+            'Task', '󰉗\tTurn this workspace into a task…\tname this empty workspace',
+            '--', '--width', '600'])
+        self.assertEqual(self.events('omarchy-menu-input'), [['Task name']])
+        self.assertEqual(self.dispatches(), ['hl.dsp.workspace.rename({ workspace = "2", name = "Planning" })'])
+        record = json.loads((self.state / '2.json').read_text())
+        self.assertEqual((record['name'], record['source']), ('Planning', 2))
+        self.assertIn('open a window before leaving or this name will be lost',
+                      self.events('omarchy-notification-send')[-1][-1])
+
+    def test_empty_plain_workspace_offers_go_when_tasks_exist(self):
+        self.empty_workspace()
+        self.parked()
+        self.cfg['selections'] = ['Go to a task…\tswitch to another task', 'Field Job Posting\tFiles']
+        self.run_task('send')
+        self.assertEqual(self.events('omarchy-menu-select')[0], [
+            'Task', '󰉗\tTurn this workspace into a task…\tname this empty workspace',
+            '󰉒\tGo to a task…\tswitch to another task', '--', '--width', '600'])
+        self.assertEqual(self.dispatches(), ['hl.dsp.focus({ workspace = "3" })'])
+
+    def test_empty_task_can_be_renamed_with_optional_go(self):
+        for others in (False, True):
+            with self.subTest(others=others):
+                self.empty_workspace()
+                self.record(source=1)
+                if others:
+                    self.parked()
+                self.cfg.update(selection='Rename this task…\tchange this empty task name', input='Revised')
+                self.run_task('send')
+                rows = ['Task', '󰏫\tRename this task…\tchange this empty task name']
+                if others:
+                    rows += ['󰉒\tGo to a task…\tswitch to another task']
+                self.assertEqual(self.menu(), rows + ['--', '--width', '600'])
+                record = json.loads((self.state / '2.json').read_text())
+                self.assertEqual((record['name'], record['source'], record['created']), ('Revised', 1, 123))
+                self.assertIn('open a window before leaving or this name will be lost',
+                              self.events('omarchy-notification-send')[-1][-1])
+
+    def test_existing_requested_window_keeps_focused_window_menu(self):
+        # An explicit live target still gets the old window menu, even when the
+        # currently focused workspace is empty.
+        self.cfg['activewindow'] = {}
+        self.cfg['activeworkspace'] = real_workspace(1, '1', 0)
+        self.cfg['selection'] = 'Cancel'
+        self.run_task('send', '--address', '0xabc')
+        self.assertEqual(self.menu(), [
+            'Task',
+            '󰐗\tStart task "Planning"\tsuggested from window title · moves this window',
+            '󰏫\tStart task with my own name…\ttype a custom name · moves this window',
+            '󰁌\tMove to another workspace…\tpick a plain workspace · moves this window',
+            '󰉗\tTurn this workspace into a task…\tname this workspace · windows stay here',
+            '--', '--width', '600'])
+        self.assertFalse(any(args[0] == 'activeworkspace' for args in self.events('hyprctl')))
+        self.assert_no_effect()
+
+    def test_missing_requested_window_uses_empty_focused_workspace(self):
+        self.empty_workspace()
+        self.cfg['selection'] = 'Turn this workspace into a task…\tname this empty workspace'
+        self.run_task('send', '--address', '0xdead')
+        self.assertEqual(self.dispatches(), ['hl.dsp.workspace.rename({ workspace = "2", name = "Planning" })'])
+
+    def test_empty_workspace_fallthrough_for_special_named_or_invalid(self):
+        for workspace in (real_workspace(-99, 'special:scratch', 0), real_workspace(0, '0', 0),
+                          real_workspace(2, 'Custom', 0), {}, real_workspace(2, '2', 1)):
+            with self.subTest(workspace=workspace):
+                self.empty_workspace()
+                self.cfg['activeworkspace'] = workspace
+                self.cfg['workspaces'] = [workspace] if workspace else []
+                self.run_task('send')
+                self.assertEqual(self.events('omarchy-menu-select'), [])
+                self.assertEqual(self.events('omarchy-notification-send')[-1][-1], 'No tasks yet')
+                self.assert_no_effect()
+
+    def test_empty_workspace_name_rechecks_after_input(self):
+        for rename in (False, True):
+            for replacement in ([], [real_workspace(2, 'Taken', 0)]):
+                with self.subTest(rename=rename, replacement=replacement):
+                    self.empty_workspace()
+                    if rename:
+                        self.record()
+                    self.cfg['selection'] = ('Rename this task…\tchange this empty task name' if rename else
+                                             'Turn this workspace into a task…\tname this empty workspace')
+                    self.cfg['input_updates'] = {'workspaces': replacement}
+                    self.run_task('send')
+                    self.assertEqual(self.dispatches(), [])
+                    (self.state / '2.json').unlink(missing_ok=True)
+
+    def test_empty_workspace_warning_only_when_name_is_ephemeral(self):
+        for persistent, windows in ((True, 0), (False, 1)):
+            with self.subTest(persistent=persistent, windows=windows):
+                self.empty_workspace()
+                updated = real_workspace(2, '2', windows)
+                updated['ispersistent'] = persistent
+                self.cfg.update(selection='Turn this workspace into a task…\tname this empty workspace',
+                                input_updates={'workspaces': [updated]})
+                self.run_task('send')
+                self.assertEqual(self.events('omarchy-notification-send')[-1][-1], 'Started task "Planning"')
+                (self.state / '2.json').unlink()
+
+    def test_leaving_empty_named_workspace_prunes_record_when_workspace_disappears(self):
+        self.empty_workspace()
+        self.cfg['selection'] = 'Turn this workspace into a task…\tname this empty workspace'
+        self.run_task('send')
+        self.assertTrue((self.state / '2.json').exists())
+        # Model Hyprland dropping the empty workspace after the user leaves it.
+        self.cfg['workspaces'] = [real_workspace(1, '1', 0)]
+        self.run_task('go')
+        self.assertFalse((self.state / '2.json').exists())
+        self.assertEqual(self.events('omarchy-notification-send')[-1][-1], 'No tasks yet')
+
+    def test_empty_workspace_dry_run_prints_choices_without_input_or_state(self):
+        self.empty_workspace()
+        self.state.rmdir()
+        result = self.run_task('send', '--dry-run')
+        self.assertIn('Turn this workspace into a task…', result.stdout)
+        self.assertEqual(self.events('omarchy-menu-select'), [])
+        self.assertEqual(self.events('omarchy-menu-input'), [])
+        self.assertEqual(self.events('omarchy-notification-send'), [])
+        self.assertEqual(self.dispatches(), [])
+        self.assertFalse(self.state.exists())
+        self.assertFalse((self.runtime / 'taskspaces.lock').exists())
+
     def parked(self, used=True):
         for wsid, name, stamp in ((3, 'Field Job Posting', 200), (4, 'Quarterly budget', 100)):
             self.cfg['workspaces'].append({'id': wsid, 'name': name})

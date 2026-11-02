@@ -48,6 +48,26 @@ try:
     assert before == (case.state / '2.json').read_bytes()
     assert not (case.runtime / 'taskspaces.lock').exists()
     assert 'hl.dsp.focus' not in result.stdout
+    print('CLI: taskspaces send --dry-run (mock empty task)')
+    case.empty_workspace()
+    case.record()
+    before = (case.state / '2.json').read_bytes()
+    result = case.run_task('send', '--dry-run')
+    print(result.stdout)
+    assert 'Rename this task…' in result.stdout
+    assert before == (case.state / '2.json').read_bytes()
+    (case.state / '2.json').unlink()
+    case.empty_workspace()
+    print('CLI: taskspaces send --dry-run (mock empty numbered workspace)')
+    result = case.run_task('send', '--dry-run')
+    print(result.stdout)
+    assert 'Turn this workspace into a task…' in result.stdout
+    assert case.dispatches() == []
+    assert case.events('omarchy-menu-select') == []
+    # The earlier helper check uses mock input; the CLI must add no input calls.
+    assert len(case.events('omarchy-menu-input')) == 1
+    assert not (case.runtime / 'taskspaces.lock').exists()
+    case.assert_no_effect()
     print('PASS: no real compositor called; dry paths dispatched nothing and wrote no task state or lock.')
 finally:
     case.doCleanups()

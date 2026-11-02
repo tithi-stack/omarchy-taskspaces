@@ -130,9 +130,12 @@ Silent send leaves you where you are; its notification reads `Sent to "Field Job
 
 To return without moving a window, choose **Go to a task…** in the send menu, or run `taskspaces go`.
 Setup offers an optional **Go to task** shortcut, starting with `Super+Alt+T`.
-On an empty workspace, the send key opens the same task list.
 Choose a task to focus it; the bar shows its name.
-If there are no tasks, the notification reads `No tasks yet`.
+If the Go-to list has no tasks, the notification reads `No tasks yet`.
+
+On an empty numbered workspace, the send key opens **Task** with **Turn this workspace into a task…** (`name this empty workspace` in grey), or **Rename this task…** (`change this empty task name`) if it is already a task. **Go to a task…** (`switch to another task`) appears when other tasks exist. Naming uses the same **Task name** prompt and keeps you here.
+
+For an empty workspace that is not persistent, the confirmation adds `open a window before leaving or this name will be lost`. Hyprland drops that workspace when you leave it empty; its name disappears, and Taskspaces removes its record on the next task refresh. Open a window before switching away to keep the task. No persistence rule is added. Other workspaces without a focused window keep the Go-to list fallback.
 
 ## Opening more windows in a task
 
