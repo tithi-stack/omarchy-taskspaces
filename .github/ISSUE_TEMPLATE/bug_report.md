@@ -19,7 +19,7 @@ A short description.
 **Versions**
 
 - Taskspaces: output of `taskspaces --version`
-- Omarchy: output of `cat /usr/share/omarchy/version`
+- Omarchy: output of `omarchy version`
 - Hyprland: output of `hyprctl version`
 
 **Output**

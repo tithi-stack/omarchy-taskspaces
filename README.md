@@ -21,7 +21,7 @@ On a numbered workspace, **Turn workspace S into a task…** names it without mo
 
 ## Status and requirements
 
-**Alpha (0.1.0), Omarchy Quattro (4.0.0.alpha) only.** Tests use mock commands; Quattro desktop use, Hyprland's removal of empty workspaces, and app save prompts on close are untested. The browser helper supports Chromium-family browsers only.
+**Alpha (0.1.0) for Omarchy 4.** Tried on Omarchy 4.0.4 with Hyprland 0.56.2. Not yet tested: multiple monitors, special workspaces, Hyprland removing an empty task workspace, and app save prompts on close. The browser helper supports Chromium-family browsers only.
 See [Status](#status) for runtime tools and limits.
 
 ## Install
@@ -40,7 +40,7 @@ Repository: `omarchy-taskspaces`; plugin id: `tithi-stack.taskspaces`; command: 
 
 The plugin never touches your Hyprland files unless you run `taskspaces setup` and choose Yes. Installing or enabling it does not run setup.
 
-If a shortcut is already taken, setup names what uses it and offers a free alternative. You can also pick your own key or skip that shortcut. Silent send starts with your chosen send key plus Alt; if that is taken, you can choose another. Existing shortcuts are never replaced.
+If a shortcut is already taken, setup names what uses it and offers a free alternative when one is available. You can also pick your own key or skip that shortcut. Silent send starts with your chosen send key plus Alt; if that is taken, you can choose another. Existing shortcuts are never replaced.
 
 Updates: `omarchy plugin update tithi-stack.taskspaces`. The bindings point at the helper inside the plugin folder, so you do not change them after an update.
 
@@ -66,6 +66,8 @@ These are suggested defaults. Use the actual keys you chose in setup or in your 
 Setup compares modifier masks and keys with `hyprctl binds -j` and checks Omarchy's stock Lua bindings before suggesting an alternative. If it cannot read live shortcuts, it stops without writing. For manual setup, inspect `hyprctl binds -j` yourself and choose free keys; do not remove someone else's shortcut to make room.
 
 ## Optional
+
+If your bar already shows the window title, turn off **Show the window title outside a task** in the widget settings.
 
 Move the widget to the center of your bar:
 
@@ -141,6 +143,10 @@ Setup offers this as a separate optional shortcut before the final confirmation.
    rm -rf "${XDG_RUNTIME_DIR:?}/taskspaces"
    ```
 
+Already removed the plugin? Its shortcuts stay in your bindings file and do nothing. Open `~/.config/hypr/bindings.lua`, delete the lines from `-- >>> taskspaces` to `-- <<< taskspaces <<<` (including the marker lines), then run `hyprctl reload`. Setup's backups are in `~/.local/state/taskspaces/backups/` (or `$XDG_STATE_HOME/taskspaces/backups/` if set).
+
+Disabling the plugin hides the bar label only. The shortcuts keep working until you run `taskspaces setup --remove`.
+
 ## Troubleshooting
 
 - **The key does nothing.** Cause: another Taskspaces action holds the lock, and the helper exits silently when it cannot get it. Or the bind did not load. Fix: wait a second and press again. If it still does nothing, run `hyprctl configerrors`.
@@ -172,7 +178,7 @@ Legacy `.conf` support is unverified. A task takes a workspace number. Finish ca
 | `omarchy-menu-select`, `omarchy-menu-input` | Menus and the name prompt. These ship with Omarchy. |
 | `omarchy-notification-send` (preferred) or `notify-send` (fallback) | Notifications. Without either, messages go to stderr. |
 
-Check your Omarchy version with `cat /usr/share/omarchy/version`. The targeted release supplies the plugin system and Lua bindings.
+Check your Omarchy version with `omarchy version`. The targeted release supplies the plugin system and Lua bindings.
 Send and finish also need `XDG_RUNTIME_DIR` set; setup and browser do not. See [Troubleshooting](#troubleshooting).
 
 ## More

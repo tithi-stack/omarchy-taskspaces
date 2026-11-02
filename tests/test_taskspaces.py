@@ -646,6 +646,7 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(list(self.state.iterdir()), [])
 
     def test_keep_in_place_restores_number_removes_state_and_keeps_focus(self):
+        self.cfg['clients'][0]['class'] = 'foot'
         self.record()
         before = copy.deepcopy(self.cfg['clients'])
         self.cfg['selection'] = 'Keep 1 window and finish'

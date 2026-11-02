@@ -13,7 +13,7 @@ mode, cls, title = sys.argv[1:]
 labels = {'google-chrome': 'Chrome', 'libreoffice-calc': 'Calc',
           'libreoffice-writer': 'Writer', 'org.gnome.Nautilus': 'Files',
           'com.mitchellh.ghostty': 'Terminal', 'Alacritty': 'Terminal',
-          'kitty': 'Terminal', 'code': 'VS Code'}
+          'kitty': 'Terminal', 'foot': 'Terminal', 'ghostty': 'Terminal', 'code': 'VS Code'}
 def clean(text):
     text = ''.join(c for c in text if c not in '"\\[]{}<>$`' and not unicodedata.category(c).startswith('C'))
     return ' '.join(text.split())
@@ -27,15 +27,35 @@ if mode == 'suggest':
     text = re.sub(r' - (?:Google Chrome|Chromium|LibreOffice (?:Calc|Writer|Impress|Draw)|Omawrite|Visual Studio Code)$', '', text)
     text = re.sub(r'^\(\d+\)\s*', '', text)
     text = re.sub(r'^\*\s*', '', text)
-    text = re.sub(r'https?://\S+|[\w.+-]+@[\w.-]+\.[\w-]+|[A-Za-z0-9_-]{20,}|\d{10,}', '', text)
+    text = re.sub(r'https?://\S+', '', text)
+    text = re.sub(r'\b[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\b|'
+                  r'\b[0-9a-fA-F]{16,}\b|'
+                  r'\b(?=[A-Za-z0-9]*[0-9])(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{20,}\b|'
+                  r'\d{10,}', '', text)
 if mode == 'suggest':
-    text = next((s.strip() for s in re.split(r' (?:-|—|–|·|\|) ', text) if s.strip()), '')
-    text = re.sub(r'\s+\(\d+\)$', '', text)
-    text = text.lstrip()
-    while text and not text[0].isalnum():
-        text = text[1:]
-    if cls.startswith('libreoffice-'):
-        text = re.sub(r'\.[A-Za-z0-9]{1,8}$', '', text)
+    status_words = set('ready working idle done thinking running waiting busy loading bash zsh fish sh'.split())
+    terminal = label == 'Terminal'
+    segments = re.split(r' (?:-|—|–|·|\|) ', text)
+    text = ''
+    for segment in segments:
+        segment = re.sub(r'\s+\(\d+\)$', '', segment.strip())
+        is_path = False
+        if terminal:
+            remote = re.fullmatch(r'[^/\s:@]+@[^/\s:]+:(.*)', segment)
+            path = remote[1] if remote else segment
+            is_path = bool(remote) or path.startswith(('/', '~'))
+            if is_path:
+                path = path.rstrip('/')
+                segment = '' if re.fullmatch(r'~[^/]*|/home/[^/]+|/root', path) else path.rsplit('/', 1)[-1]
+        segment = re.sub(r'[\w.+-]+@[\w.-]+\.[\w-]+', '', segment)
+        while not is_path and segment and not segment[0].isalnum():
+            segment = segment[1:]
+        if cls.startswith('libreoffice-'):
+            segment = re.sub(r'\.[A-Za-z0-9]{1,8}$', '', segment)
+        segment = clean(segment)
+        if segment and segment.casefold() not in status_words:
+            text = segment
+            break
 text = clean(text)
 if mode == 'suggest' and (not text or re.fullmatch(r'New Tab|Untitled.*|Loading.*', text, re.I) or text.casefold() in {label.casefold(), clean(cls).casefold(), 'google chrome', 'chromium', 'libreoffice ' + label.casefold()}):
     text = label + ' task'
@@ -330,7 +350,7 @@ finish_task() {
   if (( count == 0 )); then finish_success; return; fi
   summary=$(python3 -I - "$wins" <<'PY'
 import collections, json, sys, unicodedata
-labels = {'google-chrome':'Chrome', 'libreoffice-calc':'Calc', 'libreoffice-writer':'Writer', 'org.gnome.Nautilus':'Files', 'com.mitchellh.ghostty':'Terminal', 'Alacritty':'Terminal', 'kitty':'Terminal', 'code':'VS Code'}
+labels = {'google-chrome':'Chrome', 'libreoffice-calc':'Calc', 'libreoffice-writer':'Writer', 'org.gnome.Nautilus':'Files', 'com.mitchellh.ghostty':'Terminal', 'Alacritty':'Terminal', 'kitty':'Terminal', 'foot':'Terminal', 'ghostty':'Terminal', 'code':'VS Code'}
 items = []
 for w in json.loads(sys.argv[1]):
     cls = w['class'] or ''
@@ -425,7 +445,7 @@ COMMAND_DESCRIPTIONS = {COMMANDS[action]: DESCRIPTIONS[action] for action in COM
 KEY_ALIASES = {'ESC': 'ESCAPE', 'PRIOR': 'PAGE_UP', 'PAGEUP': 'PAGE_UP',
                'NEXT': 'PAGE_DOWN', 'PAGEDOWN': 'PAGE_DOWN'}
 DIGITS = '0123456789'
-CANDIDATES = {'send': ('SUPER + SHIFT + N', 'SUPER + CTRL + N', 'SUPER + T'),
+CANDIDATES = {'send': ('SUPER + SHIFT + T', 'SUPER + SHIFT + H', 'SUPER + SHIFT + J'),
               'finish': ('SUPER + SHIFT + D', 'SUPER + CTRL + D', 'SUPER + E'),
               'browser': ('SUPER + ALT + W', 'SUPER + ALT + C')}
 

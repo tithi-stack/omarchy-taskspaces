@@ -22,7 +22,8 @@ BarWidget {
   readonly property string title: toplevel ? (toplevel.title || toplevel.appId || "") : ""
   readonly property bool taskActive: taskName !== ""
   readonly property string glyph: String(setting("taskGlyph", "󰌨"))
-  readonly property string label: taskActive ? (glyph ? glyph + " " : "") + taskName : title
+  readonly property bool showWindowTitle: setting("showWindowTitle", true) === true
+  readonly property string label: taskActive ? (glyph ? glyph + " " : "") + taskName : (showWindowTitle ? title : "")
   readonly property int taskMaxWidth: Number(setting("taskMaxWidth", 220)) || 220
   readonly property int titleMaxWidth: Number(setting("maxWidth", 450)) || 450
   readonly property int maxLabelWidth: taskActive ? taskMaxWidth : titleMaxWidth

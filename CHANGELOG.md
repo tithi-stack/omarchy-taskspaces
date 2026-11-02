@@ -6,41 +6,21 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
-### Changed
-
-- README leads with the task workflow and a hero image, groups setup into two steps, and explains the numbered-workspace round trip.
-- Send rows read `Start task "<name>"`, `Start task with my own name…`, and `Turn workspace S into a task…`. Grey descriptions explain the suggested name, Chrome's whole-window scope, and windows staying in place. `Send to:` and `Move to:` spell out `workspace <id>` in grey.
-- Finish uses `Close 1 window and finish` / `Close N windows and finish` and `Keep 1 window and finish` / `Keep N windows and finish`. Keep shows `returns to workspace S · nothing is closed`, or `stays in workspace S · nothing is closed` for a task made from a numbered workspace.
-- Menu icons use Omarchy's Nerd Font: 󰐗 suggested name, 󰏫 type or rename, 󰉗 name the current workspace, 󰉒 send or move, 󰖭 close, 󰐃 keep, and 󰁍 cancel.
-- Suggested names stay within 35 characters, including duplicate-name numbers, so the first row always reads `Start task "<name>"`. Typed names keep their 40-character limit.
-- Close waits up to 30 seconds, stopping early only after 10 seconds with no windows closing and no new window appearing.
-
-### Fixed
-
-- Setup no longer rolls back a correct install on a Lua Hyprland config (Omarchy 4). Hyprland lists Lua shortcuts with the dispatcher `__lua` and a numeric id instead of the command, so setup now recognises its shortcuts by key, modifiers and the label it wrote, and still accepts `exec` shortcuts from older configs. The same test now backs the check after `setup --remove`, which previously could never detect a shortcut that was still loaded, and the check for an existing browser shortcut.
-- Setup treats the digit keys as taken under the modifiers of any `code:` shortcut, because Hyprland reports those with an empty key. The key-conflict menu names a Lua shortcut without a label as `another shortcut` instead of `__lua <id>`. `Esc`, `Prior` and `Next` count as the same keys as `Escape`, `Page_Up` and `Page_Down`.
-- Finish refreshes the task's windows after the menu, includes newly opened windows, and skips windows closed by hand. Windows disappearing during dispatch no longer interrupt cleanup or the success notification.
-- Tasks started from special workspaces record workspace 1 as their return destination. Tasks remember the starting workspace's number and name; if it disappears, changes name, or becomes another task, kept windows return to workspace 1. If workspace 1 also belongs to a task or has a custom name, they use the lowest unused workspace instead, and focus follows them.
-- Quotes and backslashes are removed from fallback app names before they appear in task labels, the finish app summary, or prompts.
-- Digit-only task names get a `Task ` prefix, and duplicate checks account for numbered workspaces.
-
 ## [0.1.0] - Unreleased
-
-Planned initial public release. Target: Omarchy Quattro (4.0.0.alpha).
 
 ### Added
 
-- The default task label and notification icon is the Nerd Font layers glyph 󰌨; saved custom task glyphs still take precedence.
-
-- `taskspaces setup`: consented shortcut setup with conflict alternatives, previews, backups, verified reload and rollback; `--remove` undoes its managed block and `--dry-run` prints without writing.
+- `taskspaces send`: moves the focused window to a named task workspace. Names come from the window title or a prompt; the send menu also supports naming the current workspace and renaming a task.
+- `taskspaces send --silent`: sends without following the window.
+- Suggested names preserve ordinary words and file names, omit IDs and status or shell words, and use the last component of terminal paths. Foot is labelled Terminal. Suggested names have a shorter length limit than typed names so the start row fits the menu.
+- Send menus explain suggested names, Chrome's whole-window scope, and windows staying in place. Finish menus offer Close, Keep and Cancel, with the return destination shown before choosing.
+- `taskspaces finish`: closes the task's windows or moves them back after a confirmation menu. Close sends normal close requests and waits for apps to respond, stopping when apps stop closing windows and no new window appears.
+- `taskspaces setup`: consented shortcut setup with conflict alternatives, previews, backups, verified reload and rollback; `--remove` undoes its managed block and `--dry-run` prints without writing. Send alternatives start with `Super+Shift+T`, then `Super+Shift+H` and `Super+Shift+J` when free.
 - `taskspaces browser`: opens a new window here with an existing Chromium, Chrome, Brave, Brave Origin or Edge profile; multiple profiles get a picker. It leaves Omarchy's browser launcher and stock shortcuts unchanged.
-- Setup offers an optional new-browser-window shortcut for supported browsers: `Super+Alt+B` (B for browser), with `Super+Alt+W` then `Super+Alt+C` as free alternatives, and the same consent, backup and verified rollback. Existing three-shortcut blocks can add only the browser line; existing browser shortcuts are reported and left alone. Preview and removal include the optional shortcut.
-- `taskspaces send`: moves the focused window to a named task workspace. The name is suggested from the window title.
-- `taskspaces send --silent`: the same, without following the window.
-- `taskspaces finish`: closes the task's windows or moves them back, after a confirmation menu.
+- Setup offers an optional new-browser-window shortcut for supported browsers: `Super+Alt+B` (B for browser), with `Super+Alt+W` then `Super+Alt+C` as free alternatives, and the same consent, backup and verified rollback. Existing managed blocks can add only the browser line; existing browser shortcuts are reported and left alone. Preview and removal include the optional shortcut.
 - `taskspaces --help` and `taskspaces --version`.
-- Bar widget that shows the task name on a task workspace and the window title elsewhere.
-- Documentation: README, how-it-works page, security policy, and contributing guide.
+- Bar widget that shows the task name on a task workspace and the window title elsewhere, with a setting to hide the title outside tasks. Menu icons use Omarchy's Nerd Font, and the default task glyph is its layers glyph.
+- Documentation: README with a task workflow and hero image, how-it-works page, shortcut recovery instructions, security policy, and contributing guide.
 
 [Unreleased]: https://github.com/tithi-stack/omarchy-taskspaces/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/tithi-stack/omarchy-taskspaces/releases/tag/v0.1.0

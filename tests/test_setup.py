@@ -243,7 +243,7 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(self.events('hyprctl'), [])
 
     def test_each_default_taken_uses_free_alternative(self):
-        for mask, key, expected in ((64, 'n', 'SUPER + SHIFT + N'), (72, 'N', 'SUPER + SHIFT + ALT + N'),
+        for mask, key, expected in ((64, 'n', 'SUPER + SHIFT + T'), (72, 'N', 'SUPER + SHIFT + ALT + T'),
                                     (64, 'd', 'SUPER + SHIFT + D')):
             with self.subTest(mask=mask, key=key):
                 self.bindings.write_text(ORIGINAL)
@@ -252,8 +252,36 @@ class SetupTests(unittest.TestCase):
                 self.assertIn('o.bind("' + expected + '"', self.bindings.read_text())
                 self.assertIn('already used by "Open launcher"', self.events('omarchy-menu-select')[-2][0])
                 if mask == 64 and key == 'n':
-                    self.assertIn('SUPER + SHIFT + ALT + N', self.bindings.read_text())
-                    self.assertIn('Super+Shift+N sends', result.stderr)
+                    self.assertIn('SUPER + SHIFT + ALT + T', self.bindings.read_text())
+                    self.assertIn('Super+Shift+T sends', result.stderr)
+
+    def test_send_fallbacks_are_free_in_stock_and_offered_in_order(self):
+        folder = Path('/usr/share/omarchy/default/hypr/bindings')
+        files = sorted(folder.glob('*.lua'))
+        if not files:
+            self.skipTest('Omarchy stock bindings are not installed')
+        for file in files:
+            (self.stock / file.name).write_bytes(file.read_bytes())
+        candidates = ('SUPER + SHIFT + T', 'SUPER + SHIFT + H', 'SUPER + SHIFT + J')
+        space = setup_namespace()
+        self.assertEqual(space['CANDIDATES']['send'], candidates)
+        other = {space['parse_key'](key)
+                 for action, keys in space['CANDIDATES'].items() if action != 'send'
+                 for key in keys}
+        taken = [bind(64, 'N')]
+        for expected in candidates:
+            with self.subTest(expected=expected):
+                self.cfg = {'binds': list(taken), 'choices': ['Alternative', 'Yes']}
+                result = self.run_setup('--dry-run')
+                self.assertIn('o.bind("' + expected + '", "Send window to task"', result.stdout)
+                self.assertNotIn(space['parse_key'](expected), other)
+                self.unchanged()
+                taken.append(bind(65, expected.rsplit(' + ', 1)[1]))
+        self.cfg = {'binds': taken, 'choices': ['Skip', 'Yes']}
+        result = self.run_setup('--dry-run')
+        self.assertNotIn(' send")', result.stdout)
+        self.assertFalse(any('Use ' in row for row in self.events('omarchy-menu-select')[-2][1:]))
+        self.unchanged()
 
     def test_stock_defaults_excluded_from_alternatives_and_custom_keys(self):
         (self.stock / 'stock.lua').write_text('o.bind("SUPER + SHIFT + D", "Stock", "stock")\n')

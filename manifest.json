@@ -16,10 +16,17 @@
     "defaultSection": "center",
     "defaults": {
       "maxWidth": 450,
+      "showWindowTitle": true,
       "taskMaxWidth": 220,
       "taskGlyph": "󰌨"
     },
     "schema": [
+      {
+        "key": "showWindowTitle",
+        "type": "boolean",
+        "label": "Show the window title outside a task",
+        "defaultValue": true
+      },
       {
         "key": "maxWidth",
         "type": "integer",
