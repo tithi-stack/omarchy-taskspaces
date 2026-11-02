@@ -14,11 +14,11 @@ This page describes Taskspaces 0.1.0. The automated tests use mock commands.
 
 Run `taskspaces setup` (or the full helper path from the README). Setup needs no `XDG_RUNTIME_DIR`. It reads only `${XDG_CONFIG_HOME:-$HOME/.config}/hypr/bindings.lua` as the user bindings file. `TASKSPACES_BINDINGS_FILE` overrides that path for tests.
 
-1. It checks for its managed block or hand-added `taskspaces` bindings. If a browser binding already exists in the file, it reports its key and exits without changing anything. Hand-added send/finish bindings are also reported and left alone. With a managed block and a supported default browser, it offers only the missing browser shortcut, preserving the existing bindings. Without a supported browser, an existing managed block is left alone.
+1. It checks for its managed block or hand-added `taskspaces` bindings. Hand-added bindings are reported and left alone. With a managed block, setup offers missing optional Go-to and supported-browser shortcuts, preserving the existing bindings.
 2. It reads `hyprctl binds -j`. An unreadable reply or missing `hyprctl` stops setup. Modifier masks and keys are compared without regard to key letter case. With a Lua config, Hyprland lists each shortcut with the dispatcher `__lua`, a numeric id instead of the command, and the label in `description`, so setup recognises its own shortcuts by key, modifiers and the label it wrote. An older or non-Lua config lists an `exec` shortcut with the command, which setup also accepts. A shortcut that Hyprland lists with an empty key (a `code:` binding) also reserves the digit keys under its modifiers, because the real key is not reported. Omarchy's stock bindings in `/usr/share/omarchy/default/hypr/bindings/*.lua` also reserve keys.
 3. The suggested defaults are `Super+N` for send, the chosen send key plus Alt for silent send, and `Super+D` for finish. A taken key opens a menu naming its current action. **Use … instead** offers the first free candidate: Shift+T, Shift+H, then Shift+J with Super for send; Shift+D, Ctrl+D, then E with Super for finish. Silent alternatives add Alt to send's candidate list. **Pick my own key…** accepts modifiers and a letter, number, function key, or named navigation key, with up to three attempts. **Skip this shortcut** keeps the CLI available. Skipping send also skips silent send.
-4. For a supported default browser, a separate menu explains that browser windows can jump back and offers **Add a "new browser window here" shortcut** or **Not now**. The starting key is `Super+Alt+B` (B for browser), subject to the same conflict check, own-key entry and skip. Alternatives, in order, are `Super+Alt+W` and `Super+Alt+C`, when free. These three keys are checked against the installed stock bindings by a test when those files are available. Omarchy's browser keys `Super+Shift+Return` and `Super+Shift+B` stay untouched. If a live shortcut already runs `taskspaces browser` (an `exec` shortcut with that command, or a Lua shortcut labelled `New browser window here`), setup reports that key and makes no changes. A hand-written Lua shortcut with another label can be found only in your bindings file, not from the live list. A final menu lists every newly chosen key in grey. **Yes, add them** permits the write; **Show me the lines first** prints the exact block and returns to the menu; **No, I'll add them myself** changes nothing. Without the menu helper, a terminal gets y/n prompts and the exact lines; without either, setup stops. Conflicting keys are skipped when the menu helper is unavailable.
-5. After Yes, setup rechecks the file and live keys, saves a backup, writes atomically, reloads, and verifies. A new setup appends its block; upgrading an existing block inserts only the browser line before its closing marker, preserving the old lines and surrounding content. Declining or skipping that upgrade changes nothing. `taskspaces setup --dry-run` includes the browser question and upgrade path, prints the block after Yes, and writes and reloads nothing.
+4. After the main shortcuts, setup offers **Go to task** with **Add a "go to task" shortcut** or **Not now**. Its starting key is `Super+Alt+T`, followed by `Super+Alt+J` when free, own-key entry or skip. Silent-send alternatives leave `Super+Alt+T` available for this action. For a supported default browser, a separate menu explains that browser windows can jump back and offers **Add a "new browser window here" shortcut** or **Not now**. The starting key is `Super+Alt+B` (B for browser), subject to the same conflict check, own-key entry and skip. Alternatives, in order, are `Super+Alt+W` and `Super+Alt+C`, when free. These three keys are checked against the installed stock bindings by a test when those files are available. Omarchy's browser keys `Super+Shift+Return` and `Super+Shift+B` stay untouched. An existing optional shortcut is recognised from an `exec` command or its Lua label (`Go to task` or `New browser window here`) and is not added again. Without a managed block, a live browser shortcut is reported and setup leaves the file alone. A hand-written Lua shortcut with another label can be found only in your bindings file, not from the live list. A final menu lists every newly chosen key in grey. **Yes, add them** permits the write; **Show me the lines first** prints the exact block and returns to the menu; **No, I'll add them myself** changes nothing. Without the menu helper, a terminal gets y/n prompts and the exact lines; without either, setup stops. Conflicting keys are skipped when the menu helper is unavailable.
+5. After Yes, setup rechecks the file and live keys, saves a backup, writes atomically, reloads, and verifies. A new setup appends its block; upgrading an existing block inserts only the newly chosen optional lines before its closing marker, preserving the old lines and surrounding content. Declining or skipping that upgrade changes nothing. `taskspaces setup --dry-run` includes the Go-to and browser questions and upgrade path, prints the block after Yes, and writes and reloads nothing.
 
 The appended block has these exact marker lines around a helper variable and the selected `o.bind(...)` calls:
 
@@ -30,7 +30,7 @@ The appended block has these exact marker lines around a helper variable and the
 
 Backups live at `${XDG_STATE_HOME:-$HOME/.local/state}/taskspaces/backups/bindings.lua.<UTC timestamp>`. The backup contains the original bytes. The write uses a temporary file beside the target and a rename, preserving file permissions. A symlink stays intact: setup writes its resolved target. A missing or unwritable bindings file is left alone, with a message explaining what to fix.
 
-Verification requires `hyprctl reload` to succeed, no new lines in `hyprctl configerrors` compared with the pre-write reply, and each newly chosen key to appear in `hyprctl binds -j` with the label setup wrote for its action (or, on an older config, as an `exec` binding to this helper and the right action), including `browser` when selected. Removal uses the same test and fails, with a rollback, if a removed shortcut is still listed. Failure restores the backup atomically and reloads again. If another program changes the bindings during verification, setup leaves those edits intact and asks you to restore the named backup yourself. If the second reload fails, the message asks you to reload yourself and gives the backup path. Pre-existing config errors do not count as new errors.
+Verification requires `hyprctl reload` to succeed, no new lines in `hyprctl configerrors` compared with the pre-write reply, and each newly chosen key to appear in `hyprctl binds -j` with the label setup wrote for its action (or, on an older config, as an `exec` binding to this helper and the right action), including `go` and `browser` when selected. Removal uses the same test and fails, with a rollback, if a removed shortcut is still listed. Failure restores the backup atomically and reloads again. If another program changes the bindings during verification, setup leaves those edits intact and asks you to restore the named backup yourself. If the second reload fails, the message asks you to reload yourself and gives the backup path. Pre-existing config errors do not count as new errors.
 
 `taskspaces setup --remove` asks for consent, backs up the file, removes exactly the managed block between its markers, then reloads and verifies that its shortcuts are gone. It preserves surrounding content. With no block it says there is nothing to remove. Hand-pasted bindings are never removed; setup gives their line numbers instead. Damaged or repeated markers stop setup for manual inspection.
 
@@ -48,7 +48,7 @@ It launches `uwsm-app -- <browser> --profile-directory=<folder> --new-window abo
 |---|---|
 | Task | A workspace that Taskspaces has named. Each task has one record file. |
 | Source | The workspace where a task started. Taskspaces remembers its number and name so it can return windows there safely. |
-| In-place task | A task made from a numbered workspace with **Turn workspace S into a task…**. It keeps its number. |
+| In-place task | A task made from a numbered workspace with **Turn this workspace into a task…**. It keeps its number. |
 
 ## Send menu
 
@@ -56,15 +56,30 @@ It launches `uwsm-app -- <browser> --profile-directory=<folder> --new-window abo
 
 | Icon | Row | Grey line | Shown when | What it does |
 |---|---|---|---|---|
-| 󰐗 | `Start task "<name>"` | `name suggested from the window title`; for Chrome, `name suggested from the window title · whole window (all tabs)` | Always | Creates a task with the suggested name |
+| 󰐗 | `Start task "<name>"` | `name suggested from the window title`; Chrome adds ` · whole window (all tabs)` | Always | Creates a task with the suggested name |
+| 󰉒 | `<task name>` | Window summary, such as `Files, Terminal ×2` | Other tasks | Sends the window to that task |
+| 󰉒 | **Go to a task…** | `leave this window here` | Tasks exist | Opens the Go-to list |
 | 󰏫 | **Start task with my own name…** | — | Always | Creates a task with a name you type |
 | 󰏫 | **Rename this task…** | — | On a task workspace | Renames the task |
-| 󰉗 | **Turn workspace S into a task…** | `windows stay where they are` | On a numbered workspace that is not already a task | Names the current workspace as a task; its windows stay there |
-| 󰉒 | `Send to: <task>` / `Move to: <name>` | `workspace <id>` | Other tasks, and other workspaces that are not tasks | Moves the window there. Only a task gets a record. |
+| 󰉗 | **Turn this workspace into a task…** | `windows stay where they are` | On a plain numbered workspace | Names the current workspace as a task |
+| 󰉒 | **Move to another workspace…** | — | Always | Opens a list of other plain workspaces |
 
-`S` is the current workspace number. Suggested names are capped at 35 characters, including any duplicate-name number. The first row always reads `Start task "<name>"` and fits the menu. Icons are Material Design glyphs from the Nerd Font shipped with Omarchy.
+Task rows appear most recently used first; records without a `used` time sort last.
+The plain-workspace list uses window summaries as labels, `No windows` for an empty workspace, and the workspace number only in grey.
+Selecting a plain workspace moves the window there without writing a task record.
+Suggested names are capped at 35 characters, including any duplicate-name suffix.
+Icons are Material Design glyphs from the Nerd Font shipped with Omarchy.
 
 `taskspaces send --silent` uses the same menu and moves the window without following it.
+
+### Go to task
+
+`taskspaces go` opens **Go to task**, listing every task by name with the same window summaries and most-recently-used order.
+Selecting a task focuses its workspace without moving any windows.
+The send menu's **Go to a task…** row opens this list too, as does `taskspaces send` with no focused window.
+With no tasks, the notification reads `No tasks yet`.
+`go --dry-run` prints the focus plan for the first task without opening menus, writing state or a lock, or dispatching commands.
+The bar reads the task's workspace name after a send-and-follow or a Go-to selection.
 
 ### Name rules
 
@@ -79,10 +94,10 @@ The suggested name comes from the window title.
 
 ## Send results
 
-- **Start task:** the window moves to the lowest unused workspace number. That workspace is renamed to the task. The record stores the starting workspace's number and name. For a scratchpad or other special workspace, it records workspace 1 instead.
-- **Existing task:** the window moves to that task's workspace.
-- **Plain workspace:** the window moves. No record is written.
-- **No focused window:** nothing moves. You get the notification "No window focused".
+- **Start task:** the notification reads `Started task "<task name>"`. The window moves to the lowest unused workspace number. That workspace is renamed to the task. The record stores the starting workspace's number and name. For a scratchpad or other special workspace, it records the fallback return workspace instead.
+- **Existing task:** the window moves to that task's workspace; the notification reads `Sent to "<task name>"`.
+- **Plain workspace:** the window moves; the notification reads `Moved to "<window summary>"`. No record is written.
+- **No focused window:** the Go-to list opens; no window moves.
 
 ## Finish
 
@@ -114,7 +129,7 @@ With no windows, the task finishes without opening a menu and focus goes to that
 
 ## Files and state
 
-- **Task records:** one JSON file per task, at `$XDG_RUNTIME_DIR/taskspaces/<workspace id>.json`. Each record holds the task name, its workspace number, the starting workspace number (`source`) and name (`source_name`), and the creation time. Earlier records without `source_name` can return only to a workspace that still has its numbered name and is not another task; otherwise the same fallback rule applies.
+- **Task records:** one JSON file per task, at `$XDG_RUNTIME_DIR/taskspaces/<workspace id>.json`. Each record holds the task name, its workspace number, the starting workspace number (`source`) and name (`source_name`), the creation time (`created`), and optional last-used time (`used`, epoch seconds). Starting a task, sending a window to it, or going to it writes `used`; older records without it remain valid. Earlier records without `source_name` can return only to a workspace that still has its numbered name and is not another task; otherwise the same fallback rule applies.
 - **Lock:** `$XDG_RUNTIME_DIR/taskspaces.lock` stops two actions from running at once. A second action exits without a message.
 - **Messages:** notifications use `omarchy-notification-send`, or `notify-send` if that is missing. They have the title `taskspaces`. With neither command, messages go to stderr.
 - **Setup files:** only consented setup writes the Lua bindings file, its temporary replacement and state-directory backups. Taskspaces makes no network calls. It runs `hyprctl`, `jq`, `python3`, `flock`, and Omarchy's menu commands, plus a notification command.

@@ -17,7 +17,7 @@ Picking workspace numbers, remembering what lives where, and tidying up are work
 2. **Work:** Open the windows you need inside the task. The bar shows the task name; there are no workspace notes or shortcuts per workspace to remember.
 3. **Finish:** Press your finish key (`Super+D` by default), then choose Close or Keep. The menu shows where kept windows will go. Close sends normal close requests; a window left open keeps the task unfinished and triggers a notification.
 
-On a numbered workspace, **Turn workspace S into a task…** names it without moving windows; finishing with Keep makes it an ordinary numbered workspace again. Setup lets you choose free keys for these actions. See [Bindings](#bindings).
+On a numbered workspace, **Turn this workspace into a task…** names it without moving windows; finishing with Keep makes it an ordinary numbered workspace again. Setup lets you choose free keys for these actions. See [Bindings](#bindings).
 
 ## Status and requirements
 
@@ -36,7 +36,7 @@ Repository: `omarchy-taskspaces`; plugin id: `tithi-stack.taskspaces`; command: 
    ```bash
    "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/tithi-stack.taskspaces/bin/taskspaces" setup
    ```
-   Setup offers send, silent send and finish, plus an optional **new browser window here** shortcut for a supported browser. It backs up your bindings first, checks the reload, and restores the backup if verification fails. It reports the keys you chose. **Show me the lines first** previews the exact block; **No, I'll add them myself** leaves your file alone.
+   Setup offers send, silent send and finish, plus optional **Go to task**. For a supported browser, it also offers **new browser window here**. It backs up your bindings first, checks the reload, and restores the backup if verification fails. It reports the keys you chose. **Show me the lines first** previews the exact block; **No, I'll add them myself** leaves your file alone.
 
 The plugin never touches your Hyprland files unless you run `taskspaces setup` and choose Yes. Installing or enabling it does not run setup.
 
@@ -44,7 +44,7 @@ If a shortcut is already taken, setup names what uses it and offers a free alter
 
 Updates: `omarchy plugin update tithi-stack.taskspaces`. The bindings point at the helper inside the plugin folder, so you do not change them after an update.
 
-Already have setup's three Taskspaces shortcuts? Run setup again to add only the optional browser shortcut. If a `taskspaces browser` shortcut already exists in your bindings file or live shortcuts, setup reports its key and changes nothing.
+Already have setup's main shortcuts? Run setup again to add the optional **Go to task** shortcut or the browser shortcut. Existing optional shortcuts stay in place.
 
 ## Bindings
 
@@ -57,6 +57,7 @@ These are suggested defaults. Use the actual keys you chose in setup or in your 
 | `SUPER + N` | Send the focused window to a task, then follow it | `taskspaces send` |
 | `SUPER + ALT + N` | Send the focused window to a task, and stay here | `taskspaces send --silent` |
 | `SUPER + D` | Finish the current task | `taskspaces finish` |
+| `SUPER + ALT + T` (optional) | Go to a task by name | `taskspaces go` |
 | `SUPER + ALT + B` (optional) | Open a new browser window here | `taskspaces browser` |
 
 `taskspaces --help` prints usage. `taskspaces --version` prints `0.1.0`.
@@ -92,6 +93,7 @@ o.bind("SUPER + N", "Send window to task", taskspaces_bin .. " send")
 o.bind("SUPER + ALT + N", "Send window to task (stay here)", taskspaces_bin .. " send --silent")
 o.bind("SUPER + D", "Finish task", taskspaces_bin .. " finish")
 -- Optional: check that the key is free before uncommenting.
+-- o.bind("SUPER + ALT + T", "Go to task", taskspaces_bin .. " go")
 -- o.bind("SUPER + ALT + B", "New browser window here", taskspaces_bin .. " browser")
 ```
 
@@ -100,7 +102,7 @@ o.bind("SUPER + D", "Finish task", taskspaces_bin .. " finish")
 1. Focus the window you want to move. For example, an email window titled `Reply to the team - Mail`.
 2. Press your send key (`Super+N` by default). A menu opens.
 3. The first row, **Start task "Reply to the team"**, uses the suggested name. Its grey line says `name suggested from the window title` (with ` · whole window (all tabs)` added for Chrome). Press Enter to accept it, or choose **Start task with my own name…** to enter your own.
-4. The window moves to a new workspace named after the task, and you follow it. A notification says `Task "Reply to the team" → workspace N`.
+4. The window moves to a new workspace named after the task, and you follow it. A notification says `Started task "Reply to the team"`.
 
 To open a browser inside the task, use the optional new-browser-window shortcut; the stock launcher can take you to a browser window elsewhere. See [Opening more windows in a task](#opening-more-windows-in-a-task).
 
@@ -112,11 +114,23 @@ Choose one. If you choose Close and an app keeps its window open, for example to
 
 To send without following, press your silent send key (`Super+Alt+N` by default) in step 2. The full menu rows and naming rules are in [How Taskspaces works](docs/how-it-works.md).
 
-On a numbered workspace, **Turn workspace S into a task…** names the current workspace without moving its windows; finishing that task with Keep leaves the windows there and restores the workspace's numbered name. Its grey line says `windows stay where they are`. Suggested names are capped at 35 characters so the first row always reads `Start task "<name>"`. Names you type are capped at 40 characters. Quotes and backslashes are removed from task names; names taken from an app are cleaned too. A name made only of digits gets `Task ` in front, for example `Task 2`.
+On a numbered workspace, **Turn this workspace into a task…** names the current workspace without moving its windows; finishing that task with Keep leaves the windows there and restores the workspace's numbered name. Its grey line says `windows stay where they are`. Suggested names are capped at 35 characters so the first row always reads `Start task "<name>"`. Names you type are capped at 40 characters. Quotes and backslashes are removed from task names; names taken from an app are cleaned too. A name made only of digits gets `Task ` in front, for example `Task 2`.
 
-The menu uses these icons: 󰐗 for the suggested name, 󰏫 for typing or renaming, 󰉗 for naming the current workspace, 󰉒 for sending to another workspace, 󰖭 for Close, 󰐃 for Keep, and 󰁍 for Cancel. The menu uses the Nerd Font icons included with Omarchy. Existing-task and workspace choices spell out `workspace <id>` in grey.
+The menu uses these icons: 󰐗 for the suggested name, 󰏫 for typing or renaming, 󰉗 for naming the current workspace, 󰉒 for sending to another workspace, 󰖭 for Close, 󰐃 for Keep, and 󰁍 for Cancel. The menu uses the Nerd Font icons included with Omarchy. Task choices show window summaries in grey. **Move to another workspace…** opens a separate list labelled by its windows, with the workspace number in grey.
 
 Finishing removes the task record. For a task started by moving a window, kept windows return to its starting workspace only if it still has the same name and is not another task. Otherwise they go to workspace 1. If workspace 1 is also in use by a task or has a custom name, Taskspaces uses the lowest unused workspace number. Focus follows the windows. Tasks started from a scratchpad also return to workspace 1, subject to that same safety check.
+
+### Back to a task
+
+Focus a window and press your send key, then choose a task by name to send it there and follow it.
+Task rows show their windows in grey, with the most recently used task first.
+Silent send leaves you where you are; its notification reads `Sent to "Field Job Posting"` when you choose that task.
+
+To return without moving a window, choose **Go to a task…** in the send menu, or run `taskspaces go`.
+Setup offers an optional **Go to task** shortcut, starting with `Super+Alt+T`.
+On an empty workspace, the send key opens the same task list.
+Choose a task to focus it; the bar shows its name.
+If there are no tasks, the notification reads `No tasks yet`.
 
 ## Opening more windows in a task
 
@@ -150,7 +164,7 @@ Disabling the plugin hides the bar label only. The shortcuts keep working until 
 ## Troubleshooting
 
 - **The key does nothing.** Cause: another Taskspaces action holds the lock, and the helper exits silently when it cannot get it. Or the bind did not load. Fix: wait a second and press again. If it still does nothing, run `hyprctl configerrors`.
-- **Notification: "No window focused".** Cause: no window had focus when you pressed your send key. Fix: focus a window and press it again.
+- **Notification: "No tasks yet".** Cause: the Go-to list has no tasks to show. Fix: focus a window and use the send key to start a task.
 - **Notification: "This workspace isn't a task".** Cause: your finish key ran on a plain workspace. Fix: switch to the task workspace, then press your finish key (`Super+D` by default).
 - **Notification: "Dispatch failed: <reason>".** Cause: Hyprland rejected a command, or did not reply ("no reply from Hyprland"). Fix: run `hyprctl version`. If that fails, Hyprland is not reachable from this shell. If it works, the reason after the colon is Hyprland's reply to the rejected command.
 - **Notification: "Missing required command: <names>".** Cause: the listed commands are not on `PATH`. Fix: install them, then check each with `command -v <name>`.
@@ -179,7 +193,7 @@ Legacy `.conf` support is unverified. A task takes a workspace number. Finish ca
 | `omarchy-notification-send` (preferred) or `notify-send` (fallback) | Notifications. Without either, messages go to stderr. |
 
 Check your Omarchy version with `omarchy version`. The targeted release supplies the plugin system and Lua bindings.
-Send and finish also need `XDG_RUNTIME_DIR` set; setup and browser do not. See [Troubleshooting](#troubleshooting).
+Send, go and finish also need `XDG_RUNTIME_DIR` set; setup and browser do not. See [Troubleshooting](#troubleshooting).
 
 ## More
 

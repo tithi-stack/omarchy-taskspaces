@@ -48,9 +48,10 @@ if cmd == 'hyprctl':
             text = Path(os.environ['TASKSPACES_BINDINGS_FILE']).read_text()
             if 'local taskspaces_bin = ' in text and '-- >>> taskspaces' in text:
                 helper = json.loads(re.search(r'local taskspaces_bin = (.+)', text)[1])
-                pattern = r'o.bind\("([^"]+)", "([^"]+)", taskspaces_bin \.\. " (send(?: --silent)?|finish|browser)"\)'
+                pattern = r'o.bind\("([^"]+)", "([^"]+)", taskspaces_bin \.\. " (send(?: --silent)?|finish|browser|go)"\)'
                 for serial, (key, description, action) in enumerate(re.findall(pattern, text), 301):
                     if action == 'browser' and cfg.get('missing_browser'): continue
+                    if action == 'go' and cfg.get('missing_go'): continue
                     mods = {'SUPER':64, 'CTRL':4, 'ALT':8, 'SHIFT':1}
                     parts = key.split(' + ')
                     mask = sum(mods[m] for m in parts[:-1])
@@ -83,6 +84,9 @@ if cmd == 'hyprctl':
     else: raise RuntimeError(args)
 elif cmd == 'omarchy-menu-select':
     choice = cfg.setdefault('choices', []).pop(0) if cfg.get('choices') else 'No'
+    if args[0] == 'Back to a task by name' and choice != 'Add a \"go to task\" shortcut':
+        cfg.setdefault('choices', []).insert(0, choice)
+        choice = 'Not now'
     if cfg.get('edit_on_menu'):
         Path(os.environ['TASKSPACES_BINDINGS_FILE']).write_text('edited while menu open\n')
     if cfg.get('take_on_menu') and args[0] == 'Add Taskspaces shortcuts?':
@@ -179,6 +183,11 @@ class SetupTests(unittest.TestCase):
         items = [json.loads(line) for line in file.read_text().splitlines()] if file.exists() else []
         return [args for cmd, args in items if command is None or cmd == command]
 
+    def non_go_menus(self):
+        # Existing core/browser assertions ignore the separate optional Go-to question.
+        return [menu for menu in self.events('omarchy-menu-select')
+                if menu[0] != 'Back to a task by name']
+
     def backups(self):
         return list((self.root / 'state/taskspaces/backups').glob('bindings.lua.*'))
 
@@ -186,6 +195,99 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(self.bindings.read_text(), original)
         self.assertEqual(self.backups(), [])
         self.assertNotIn(['reload'], self.events('hyprctl'))
+
+    def test_go_shortcut_offer_upgrade_verify_and_remove(self):
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy):
+                self.bindings.write_text(ORIGINAL)
+                self.cfg = {'choices': ['Add a "go to task" shortcut', 'Yes'], 'legacy_exec': legacy}
+                self.run_setup()
+                self.assertIn('o.bind("SUPER + ALT + T", "Go to task", taskspaces_bin .. " go")', self.bindings.read_text())
+                self.assertEqual(self.cfg['reloaded'], 1)
+                self.cfg['choices'] = ['Remove']
+                self.run_setup('--remove')
+                self.assertEqual(self.bindings.read_text(), ORIGINAL)
+        core = self.core_block()
+        self.cfg = {'choices': ['Add a "go to task" shortcut', 'Yes']}
+        self.run_setup()
+        expected = core.replace(END, 'o.bind("SUPER + ALT + T", "Go to task", taskspaces_bin .. " go")\n' + END)
+        self.assertEqual(self.bindings.read_text(), expected)
+        self.assertEqual(self.backups()[-1].read_text(), core)
+
+    def test_go_conflict_fallback_own_key_skip_and_dry_run(self):
+        for taken, choice, expected in (([bind(72, 'T')], 'Alternative', 'SUPER + ALT + J'),
+                                         ([bind(72, 'T'), bind(72, 'J')], 'Pick', 'SUPER + F8'),
+                                         ([bind(72, 'T'), bind(72, 'J')], 'Skip', None)):
+            with self.subTest(expected=expected):
+                self.bindings.write_text(ORIGINAL)
+                self.cfg = {'binds': taken, 'choices': ['Add a "go to task" shortcut', choice, 'Yes'],
+                            'inputs': ['SUPER + F8']}
+                result = self.run_setup('--dry-run')
+                if expected:
+                    self.assertIn('o.bind("' + expected + '", "Go to task"', result.stdout)
+                else:
+                    self.assertNotIn(' go")', result.stdout)
+                self.unchanged()
+
+    def test_go_missing_loaded_and_stale_removal_roll_back(self):
+        self.cfg = {'choices': ['Add a "go to task" shortcut', 'Yes'], 'missing_go': True}
+        result = self.run_setup(expected=1)
+        self.assertIn('restored and reloaded', result.stderr)
+        self.assertEqual(self.bindings.read_text(), ORIGINAL)
+        self.cfg = {'choices': ['Add a "go to task" shortcut', 'Yes']}
+        self.run_setup()
+        before = self.bindings.read_bytes()
+        self.cfg = {'choices': ['Remove'], 'stale_binds': [bind(72, 'T', 'Go to task')]}
+        self.run_setup('--remove', expected=1)
+        self.assertEqual(self.bindings.read_bytes(), before)
+
+    def test_go_offer_order_and_existing_browser_upgrade(self):
+        self.support_browser()
+        self.cfg = {'choices': ['Add a "go to task" shortcut', 'Add a "new browser window here" shortcut', 'Yes']}
+        self.run_setup()
+        self.assertEqual([m[0] for m in self.events('omarchy-menu-select')], [
+            'Back to a task by name',
+            'Browser windows can jump back to where the browser was first opened',
+            'Add Taskspaces shortcuts?'])
+        original = self.bindings.read_text()
+        self.assertLess(original.index(' go")'), original.index(' browser")'))
+        self.cfg = {}
+        (self.root / 'events.jsonl').unlink()
+        self.run_setup()
+        self.assertEqual(self.events('omarchy-menu-select'), [])
+        self.assertEqual(self.bindings.read_text(), original)
+        # An existing browser line does not prevent adding the missing Go-to line.
+        before = original.replace('o.bind("SUPER + ALT + T", "Go to task", taskspaces_bin .. " go")\n', '')
+        self.bindings.write_text(before)
+        self.cfg = {'choices': ['Add a "go to task" shortcut', 'Yes']}
+        self.run_setup()
+        self.assertEqual(self.bindings.read_text().count(' browser")'), 1)
+        self.assertEqual(self.bindings.read_text().count(' go")'), 1)
+        self.assertIn(before, [backup.read_text() for backup in self.backups()])
+
+    def test_go_key_taken_at_consent_and_wrong_label_or_key_roll_back(self):
+        self.cfg = {'choices': ['Add a "go to task" shortcut', 'Yes'], 'take_on_menu': bind(72, 'T')}
+        self.assertIn('just taken', self.run_setup(expected=1).stderr)
+        self.unchanged()
+        for stale in (bind(72, 'J', 'Go to task'), bind(72, 'T', 'Another action')):
+            self.cfg = {'choices': ['Add a "go to task" shortcut', 'Yes'],
+                        'missing_go': True, 'stale_binds': [stale]}
+            self.assertIn('did not load every selected', self.run_setup(expected=1).stderr)
+            self.assertEqual(self.bindings.read_text(), ORIGINAL)
+
+    def test_go_keys_free_in_installed_stock_bindings(self):
+        files = sorted(Path('/usr/share/omarchy/default/hypr/bindings').glob('*.lua'))
+        if not files:
+            self.skipTest('Omarchy stock bindings are not installed')
+        for file in files:
+            (self.stock / file.name).write_bytes(file.read_bytes())
+        for taken, key in (([], 'SUPER + ALT + T'), ([bind(72, 'T')], 'SUPER + ALT + J')):
+            core = self.core_block()
+            self.cfg = {'binds': taken, 'choices': ['Add a "go to task" shortcut'] +
+                        (['Alternative'] if taken else []) + ['Yes']}
+            result = self.run_setup('--dry-run')
+            self.assertIn('o.bind("' + key + '", "Go to task"', result.stdout)
+            self.unchanged(core)
 
     def test_free_yes_exact_block_backup_atomic_permissions_and_idempotency(self):
         inode = self.bindings.stat().st_ino
@@ -212,7 +314,7 @@ class SetupTests(unittest.TestCase):
         self.cfg['choices'] = ['Show', 'Yes']
         result = self.run_setup()
         self.assertEqual(result.stdout, self.bindings.read_text()[len(ORIGINAL):])
-        menus = self.events('omarchy-menu-select')
+        menus = self.non_go_menus()
         self.assertEqual(menus[0], menus[1])
         self.assertIn('your bindings file is backed up first', menus[0][1])
         self.assertIn('Super+D finish', menus[0][1])
@@ -250,7 +352,7 @@ class SetupTests(unittest.TestCase):
                 self.cfg = {'binds': [bind(mask, key)], 'choices': ['Alternative', 'Yes']}
                 result = self.run_setup()
                 self.assertIn('o.bind("' + expected + '"', self.bindings.read_text())
-                self.assertIn('already used by "Open launcher"', self.events('omarchy-menu-select')[-2][0])
+                self.assertIn('already used by "Open launcher"', self.non_go_menus()[-2][0])
                 if mask == 64 and key == 'n':
                     self.assertIn('SUPER + SHIFT + ALT + T', self.bindings.read_text())
                     self.assertIn('Super+Shift+T sends', result.stderr)
@@ -298,7 +400,7 @@ class SetupTests(unittest.TestCase):
         self.cfg = {'binds': [bind(64, 'D'), bind(65, 'D'), bind(68, 'D'), bind(64, 'E')],
                     'choices': ['Skip', 'Yes']}
         self.run_setup()
-        menu = self.events('omarchy-menu-select')[-2]
+        menu = self.non_go_menus()[-2]
         self.assertFalse(any('Use ' in row for row in menu[1:]))
         self.assertNotIn(' finish")', self.bindings.read_text())
 
@@ -350,15 +452,15 @@ class SetupTests(unittest.TestCase):
     def test_conflict_title_falls_back_and_sanitizes(self):
         self.cfg = {'binds': [bind(64, 'D', description='\n"Bad\x1b\tname"')], 'choices': ['Skip', 'No']}
         self.run_setup()
-        self.assertEqual(self.events('omarchy-menu-select')[0][0], 'Super+D is already used by "Bad name"')
+        self.assertEqual(self.non_go_menus()[0][0], 'Super+D is already used by "Bad name"')
         # A Lua shortcut has no command text to show: arg is only an id.
         self.cfg = {'binds': [bind(64, 'D', description='')], 'choices': ['Skip', 'No']}
         self.run_setup()
-        self.assertEqual(self.events('omarchy-menu-select')[-2][0],
+        self.assertEqual(self.non_go_menus()[-2][0],
                          'Super+D is already used by "another shortcut"')
         self.cfg = {'binds': [legacy_bind(64, 'D', description='')], 'choices': ['Skip', 'No']}
         self.run_setup()
-        self.assertIn('exec launcher', self.events('omarchy-menu-select')[-2][0])
+        self.assertIn('exec launcher', self.non_go_menus()[-2][0])
 
     def test_missing_or_unreadable_hyprctl(self):
         for bad in ('not json', '{}', '[{}]', '[{"key":"D","modmask":"64"}]'):
@@ -490,7 +592,7 @@ class SetupTests(unittest.TestCase):
         for answer in (b'n\n', b'y\n'):
             master, slave = pty.openpty()
             try:
-                os.write(master, answer)
+                os.write(master, b'n\n' + answer)
                 result = self.run_setup(stdin=slave)
             finally:
                 os.close(master)
@@ -566,7 +668,7 @@ class SetupTests(unittest.TestCase):
                            'o.bind("SUPER + ALT + N", "Send window to task (stay here)", taskspaces_bin .. " send --silent")',
                            'o.bind("SUPER + D", "Finish task", taskspaces_bin .. " finish")', '']) + browser_line + END + '\n'
         self.assertEqual(self.bindings.read_text(), ORIGINAL + block)
-        menus = self.events('omarchy-menu-select')
+        menus = self.non_go_menus()
         self.assertEqual(menus[0][0], 'Browser windows can jump back to where the browser was first opened')
         self.assertEqual(menus[0][1:3], ['󰀄\tAdd a "new browser window here" shortcut\tSuper+Alt+B',
                                         '󰁍\tNot now\tyou can run taskspaces browser any time'])
@@ -598,7 +700,7 @@ class SetupTests(unittest.TestCase):
                 self.bindings.write_text(ORIGINAL)
                 self.cfg = {'choices': ['Yes']}
                 self.run_setup()
-        menus = self.events('omarchy-menu-select')
+        menus = self.non_go_menus()
         self.assertEqual(len(menus), 3)
         self.assertTrue(all(menu[0] == 'Add Taskspaces shortcuts?' for menu in menus))
 
@@ -636,7 +738,7 @@ class SetupTests(unittest.TestCase):
             'o.bind("SUPER + CTRL + B", "Bluetooth", "bluetooth")\n')
         self.cfg['choices'] = ['Add a "new browser window here" shortcut', 'Yes']
         self.run_setup()
-        menus = self.events('omarchy-menu-select')
+        menus = self.non_go_menus()
         self.assertEqual([menu[0] for menu in menus],
                          ['Browser windows can jump back to where the browser was first opened',
                           'Add Taskspaces shortcuts?'])
@@ -658,7 +760,7 @@ class SetupTests(unittest.TestCase):
                     self.assertIn('o.bind("' + expected + '", "New browser window here"', self.bindings.read_text())
                 else:
                     self.assertNotIn(' browser")', self.bindings.read_text())
-                    menu = self.events('omarchy-menu-select')[-2]
+                    menu = self.non_go_menus()[-2]
                     self.assertFalse(any('Use ' in row for row in menu[1:]))
 
     def test_browser_keys_are_free_in_installed_stock_bindings(self):
@@ -683,7 +785,7 @@ class SetupTests(unittest.TestCase):
                                        (['Alternative'] if taken else []) + ['Yes']}
                 result = self.run_setup('--dry-run')
                 self.assertIn('o.bind("' + expected + '", "New browser window here"', result.stdout)
-                self.assertEqual(len(self.events('omarchy-menu-select')), 3 if taken else 2)
+                self.assertEqual(len(self.non_go_menus()), 3 if taken else 2)
                 self.unchanged(core)
 
     def test_browser_live_conflict_rejects_taken_custom_key(self):
@@ -704,7 +806,7 @@ class SetupTests(unittest.TestCase):
         expected = core.replace(END, 'o.bind("SUPER + ALT + B", "New browser window here", taskspaces_bin .. " browser")\n' + END)
         self.assertEqual(self.bindings.read_text(), expected)
         self.assertEqual(self.backups()[0].read_text(), core)
-        menus = self.events('omarchy-menu-select')
+        menus = self.non_go_menus()
         self.assertEqual(len(menus), 2)
         self.assertIn('Super+Alt+B browser', menus[1][1])
         self.assertNotIn('Super+N send', menus[1][1])
@@ -735,7 +837,7 @@ class SetupTests(unittest.TestCase):
                 self.assertIn('Already set up', result.stderr)
                 self.assertIn(key, result.stderr)
                 self.unchanged(text)
-        self.assertEqual(self.events('omarchy-menu-select'), [])
+        self.assertEqual(self.non_go_menus(), [])
 
     def test_browser_dry_run_including_upgrade_writes_nothing(self):
         for upgrade in (False, True):

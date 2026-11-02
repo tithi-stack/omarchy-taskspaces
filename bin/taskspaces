@@ -185,22 +185,82 @@ make_workspace_task() {
   if ! $dry; then
     pending="$state_dir/$source.json.tmp"
     jq -n --argjson id "$source" --arg name "$name" --argjson created "$(date +%s)" \
-      '{id:$id, name:$name, source:$id, source_name:($id | tostring), created:$created}' > "$pending"
+      '{id:$id, name:$name, source:$id, source_name:($id | tostring), created:$created, used:$created}' > "$pending"
   fi
   if ! dispatch "hl.dsp.workspace.rename({ workspace = $(lua_string "$source"), name = $(lua_string "$name") })"; then
     if ! $dry; then rm -- "$pending"; fi
     return 1
   fi
   if ! $dry; then mv -- "$pending" "$state_dir/$source.json"; fi
-  notify "Task \"$name\" → workspace $source"
+  notify "Started task \"$name\""
+}
+# Share the finish menu's app summary with task and plain-workspace lists.
+window_summary() {
+python3 -I - "$1" <<'PY'
+import collections, json, sys, unicodedata
+labels = {'google-chrome':'Chrome', 'libreoffice-calc':'Calc', 'libreoffice-writer':'Writer', 'org.gnome.Nautilus':'Files', 'com.mitchellh.ghostty':'Terminal', 'Alacritty':'Terminal', 'kitty':'Terminal', 'foot':'Terminal', 'ghostty':'Terminal', 'code':'VS Code'}
+items = []
+for w in json.loads(sys.argv[1]):
+    cls = w['class'] or ''
+    label = labels.get(cls, cls.rsplit('.', 1)[-1].capitalize() or 'App')
+    label = ''.join(c for c in label if c not in '"\\[]{}<>$`' and not unicodedata.category(c).startswith('C')) or 'App'
+    if cls.startswith('libreoffice-'):
+        label += ' (' + (w['title'] or '').split(' - LibreOffice', 1)[0].lstrip('* ') + ')'
+    items.append(' '.join(label.split()))
+print(', '.join(k + (' ×' + str(v) if v > 1 else '') for k, v in collections.Counter(items).items()) or 'No windows')
+PY
+}
+mark_used() {
+  $dry && return 0
+  local pending="$state_dir/$1.json.tmp"
+  jq --argjson used "$(date +%s)" '.used = $used' "$state_dir/$1.json" > "$pending"
+  mv -- "$pending" "$state_dir/$1.json"
+}
+build_task_rows() {
+  local excluded=${1:-0} record candidate summary clients
+  clients=$(hyprctl clients -j)
+  while IFS= read -r record; do
+    candidate=$(jq -r .id <<< "$record")
+    summary=$(window_summary "$(jq -c --argjson id "$candidate" '[.[] | select(.workspace.id == $id and .mapped != false)]' <<< "$clients")")
+    task_rows[$candidate]="$(jq -r .name <<< "$record")"$'\t'"$summary"
+    rows+=("$(printf '󰉒\t%s' "${task_rows[$candidate]}")")
+  done < <(jq -c --argjson excluded "$excluded" '
+    sort_by([(if (.used | type) == "number" then 0 else 1 end),
+      -(if (.used | type) == "number" then .used else 0 end), .id])[]
+    | select(.id != $excluded)' <<< "$tasks")
+}
+go_task() {
+  local selection record candidate target='' name
+  local -a rows=()
+  local -A task_rows=()
+  workspaces=$(hyprctl workspaces -j)
+  prune
+  if [[ $tasks == '[]' ]]; then notify 'No tasks yet'; return; fi
+  build_task_rows
+  if $dry; then selection=${rows[0]#*$'\t'}; else
+    selection=$(omarchy-menu-select 'Go to task' "${rows[@]}" -- --width 600) || return 0
+  fi
+  while IFS= read -r record; do
+    candidate=$(jq -r .id <<< "$record")
+    if [[ $selection == "${task_rows[$candidate]}" ]]; then
+      target=$candidate
+      name=$(jq -r .name <<< "$record")
+      break
+    fi
+  done < <(jq -c '.[]' <<< "$tasks")
+  [[ -n $target ]] || return 0
+  workspaces=$(hyprctl workspaces -j)
+  jq -e --argjson id "$target" --arg name "$name" 'any(.[]; .id == $id and .name == $name)' <<< "$workspaces" >/dev/null || return 0
+  dispatch "hl.dsp.focus({ workspace = $(lua_string "$target") })"
+  mark_used "$target"
 }
 send_task() {
-  local window address cls title source return_source source_name suggested selection target name row record candidate plain_workspaces plain_target=false
+  local window address cls title source return_source source_name suggested selection target name record candidate plain_workspaces plain_target=false started=false
   if [[ -n $requested_address ]]; then
     window=$(hyprctl clients -j | jq -c --arg address "$requested_address" 'first(.[] | select(.address == $address and .mapped != false)) // {}')
   else window=$(hyprctl activewindow -j); fi
   address=$(jq -r '.address // empty' <<< "$window")
-  if [[ ! $address =~ ^0x[0-9a-fA-F]+$ ]]; then notify 'No window focused'; return; fi
+  if [[ ! $address =~ ^0x[0-9a-fA-F]+$ ]]; then go_task; return; fi
   cls=$(jq -r '.class // ""' <<< "$window")
   title=$(jq -r '.title // ""' <<< "$window")
   source=$(jq -er '.workspace.id | select(type == "number")' <<< "$window")
@@ -210,91 +270,106 @@ send_task() {
   (( return_source > 0 )) || return_source=1
   source_name=$(jq -r --argjson id "$return_source" 'first(.[] | select(.id == $id)).name // ($id | tostring)' <<< "$workspaces")
   suggested=$(dedupe "$(suggest_name "$cls" "$title")" 35)
-  local first="Start task \"$suggested\"" typed='Start task with my own name…' rename='Rename this task…'
-  local adopt="Turn workspace $source into a task…" can_adopt=false
-  local -a rows=("$(printf '󰐗\t%s\tname suggested from the window title' "$first")" "$(printf '󰏫\t%s' "$typed")")
+  local first="Start task \"$suggested\""$'\tname suggested from the window title'
+  local typed='Start task with my own name…' rename='Rename this task…'
+  local adopt=$'Turn this workspace into a task…\twindows stay where they are' can_adopt=false
+  local go=$'Go to a task…\tleave this window here' move='Move to another workspace…'
+  local -a rows=()
   local -A task_rows=() plain_rows=()
-  [[ $cls != google-chrome ]] || rows[0]+=' · whole window (all tabs)'
+  [[ $cls != google-chrome ]] || first+=' · whole window (all tabs)'
+  rows+=("$(printf '󰐗\t%s' "$first")")
+  build_task_rows "$source"
+  [[ $tasks == '[]' ]] || rows+=("$(printf '󰉒\t%s' "$go")")
+  rows+=("$(printf '󰏫\t%s' "$typed")")
   local source_record
   source_record=$(jq -c --argjson source "$source" 'first(.[] | select(.id == $source)) // empty' <<< "$tasks")
   [[ -z $source_record ]] || rows+=("$(printf '󰏫\t%s' "$rename")")
   if [[ -z $source_record && ! -e $state_dir/$source.json ]] && jq -e --argjson id "$source" \
     'any(.[]; .id == $id and .id > 0 and .name == ($id | tostring))' <<< "$workspaces" >/dev/null; then
     can_adopt=true
-    rows+=("$(printf '󰉗\t%s\twindows stay where they are' "$adopt")")
+    rows+=("$(printf '󰉗\t%s' "$adopt")")
   fi
-  while IFS= read -r record; do
-    candidate=$(jq -r .id <<< "$record")
-    task_rows[$candidate]=$(jq -r '"Send to: " + .name + "\tworkspace " + (.id | tostring)' <<< "$record")
-    rows+=("$(printf '󰉒\t%s' "${task_rows[$candidate]}")")
-  done < <(jq -c --argjson source "$source" 'sort_by(.id)[] | select(.id != $source)' <<< "$tasks")
-  plain_workspaces=$(jq -c --argjson tasks "$tasks" --argjson source "$source" '
-    [.[] | select(.id > 0 and .id != $source)
-      | select(.id as $id | any($tasks[]; .id == $id) | not)] | sort_by(.id)' <<< "$workspaces")
-  while IFS= read -r record; do
-    candidate=$(jq -r .id <<< "$record")
-    plain_rows[$candidate]=$(jq -r '"Move to: " + .name + "\tworkspace " + (.id | tostring)' <<< "$record")
-    rows+=("$(printf '󰉒\t%s' "${plain_rows[$candidate]}")")
-  done < <(jq -c '.[]' <<< "$plain_workspaces")
+  rows+=("$(printf '󰉒\t%s' "$move")")
   if $dry; then selection=$first; else
     selection=$(omarchy-menu-select 'Task' "${rows[@]}" -- --width 600) || return 0
   fi
-  row=${selection%%$'\t'*}
+  if [[ $selection == "$go" && $tasks != '[]' ]]; then go_task; return; fi
   if [[ $selection == "$rename" && -n $source_record ]]; then
     rename_task "$source" "$cls" "$source_record"
     return
   fi
-  if [[ $row == "$adopt" ]] && $can_adopt; then
+  if [[ $selection == "$adopt" ]] && $can_adopt; then
     make_workspace_task "$source" "$cls"
     return
   fi
-  if [[ $row == "$first" || $row == "$typed" ]]; then
+  if [[ $selection == "$first" || $selection == "$typed" ]]; then
     name=$suggested
-    if [[ $row == "$typed" ]]; then
+    if [[ $selection == "$typed" ]]; then
       name=$(omarchy-menu-input 'Task name') || return 0
       [[ -n ${name//[[:space:]]/} ]] || return 0
       name=$(name_value sanitize "$cls" "$name")
       [[ -n $name ]] || return 0
     fi
-    # A workspace may have appeared while the menu was open.
     workspaces=$(hyprctl workspaces -j)
-    if [[ $row == "$first" ]]; then name=$(dedupe "$name" 35); else name=$(dedupe "$name"); fi
+    if [[ $selection == "$first" ]]; then name=$(dedupe "$name" 35); else name=$(dedupe "$name"); fi
     target=$(first_free)
     printf 'Target workspace: %s; name: %s; source: %s; address: %s\n' "$target" "$name" "$source" "$address"
     move_window "$address" "$target" "$follow"
     dispatch "hl.dsp.workspace.rename({ workspace = $(lua_string "$target"), name = $(lua_string "$name") })"
     if ! $dry; then
       jq -n --argjson id "$target" --arg name "$name" --argjson source "$return_source" --arg source_name "$source_name" --argjson created "$(date +%s)" \
-        '{id:$id, name:$name, source:$source, source_name:$source_name, created:$created}' > "$state_dir/$target.json"
+        '{id:$id, name:$name, source:$source, source_name:$source_name, created:$created, used:$created}' > "$state_dir/$target.json"
     fi
+    started=true
   else
-    # Match the whole returned row; never trust arbitrary menu text as Lua.
     target=''
-    while IFS= read -r record; do
-      candidate=$(jq -r .id <<< "$record")
-      if [[ $selection == "${task_rows[$candidate]}" ]]; then
-        target=$candidate
-        name=$(jq -r .name <<< "$record")
-        break
-      fi
-    done < <(jq -c --argjson source "$source" '.[] | select(.id != $source)' <<< "$tasks")
-    if [[ -z $target ]]; then
+    if [[ $selection == "$move" ]]; then
+      local clients summary
+      workspaces=$(hyprctl workspaces -j)
+      prune
+      plain_workspaces=$(jq -c --argjson tasks "$tasks" --argjson source "$source" '
+        [.[] | select(.id > 0 and .id != $source)
+          | select(.id as $id | any($tasks[]; .id == $id) | not)] | sort_by(.id)' <<< "$workspaces")
+      clients=$(hyprctl clients -j)
+      rows=()
+      while IFS= read -r record; do
+        candidate=$(jq -r .id <<< "$record")
+        summary=$(window_summary "$(jq -c --argjson id "$candidate" '[.[] | select(.workspace.id == $id and .mapped != false)]' <<< "$clients")")
+        plain_rows[$candidate]="$summary"$'\t'"workspace $candidate"
+        rows+=("$(printf '󰉒\t%s' "${plain_rows[$candidate]}")")
+      done < <(jq -c '.[]' <<< "$plain_workspaces")
+      (( ${#rows[@]} )) || return 0
+      selection=$(omarchy-menu-select 'Move to another workspace' "${rows[@]}" -- --width 600) || return 0
       while IFS= read -r record; do
         candidate=$(jq -r .id <<< "$record")
         if [[ $selection == "${plain_rows[$candidate]}" ]]; then
           target=$candidate
           name=$(jq -r .name <<< "$record")
+          summary=${selection%%$'\t'*}
           plain_target=true
           break
         fi
       done < <(jq -c '.[]' <<< "$plain_workspaces")
+    else
+      # Match the whole returned row; never trust arbitrary menu text as Lua.
+      while IFS= read -r record; do
+        candidate=$(jq -r .id <<< "$record")
+        if [[ $selection == "${task_rows[$candidate]}" ]]; then
+          target=$candidate
+          name=$(jq -r .name <<< "$record")
+          break
+        fi
+      done < <(jq -c --argjson source "$source" '.[] | select(.id != $source)' <<< "$tasks")
     fi
     [[ -n $target ]] || return 0
     workspaces=$(hyprctl workspaces -j)
     jq -e --argjson id "$target" --arg name "$name" 'any(.[]; .id == $id and .name == $name)' <<< "$workspaces" >/dev/null || return 0
     move_window "$address" "$target" "$follow"
+    if ! $plain_target; then mark_used "$target"; fi
   fi
-  if $plain_target; then notify "Moved to workspace $target"; else notify "Task \"$name\" → workspace $target"; fi
+  if $plain_target; then notify "Moved to \"$summary\""
+  elif $started; then notify "Started task \"$name\""
+  else notify "Sent to \"$name\""; fi
 }
 finish_destination() {
   if [[ $source == "$id" ]]; then printf '%s\n' "$id"; return; fi
@@ -348,20 +423,7 @@ finish_task() {
   wins=$(hyprctl clients -j | jq -c --argjson id "$id" '[.[] | select(.workspace.id == $id and .mapped != false) | {address, class, title}]')
   count=$(jq length <<< "$wins")
   if (( count == 0 )); then finish_success; return; fi
-  summary=$(python3 -I - "$wins" <<'PY'
-import collections, json, sys, unicodedata
-labels = {'google-chrome':'Chrome', 'libreoffice-calc':'Calc', 'libreoffice-writer':'Writer', 'org.gnome.Nautilus':'Files', 'com.mitchellh.ghostty':'Terminal', 'Alacritty':'Terminal', 'kitty':'Terminal', 'foot':'Terminal', 'ghostty':'Terminal', 'code':'VS Code'}
-items = []
-for w in json.loads(sys.argv[1]):
-    cls = w['class'] or ''
-    label = labels.get(cls, cls.rsplit('.', 1)[-1].capitalize() or 'App')
-    label = ''.join(c for c in label if c not in '"\\[]{}<>$`' and not unicodedata.category(c).startswith('C')) or 'App'
-    if cls.startswith('libreoffice-'):
-        label += ' (' + (w['title'] or '').split(' - LibreOffice', 1)[0].lstrip('* ') + ')'
-    items.append(' '.join(label.split()))
-print(', '.join(k + (' ×' + str(v) if v > 1 else '') for k, v in collections.Counter(items).items()))
-PY
-  )
+  summary=$(window_summary "$wins")
   local windows="$count windows"
   (( count != 1 )) || windows='1 window'
   local close_row="Close $windows and finish" keep_row="Keep $windows and finish"
@@ -438,8 +500,8 @@ END = '-- <<< taskspaces <<<'
 MODS = {'SUPER': 64, 'CTRL': 4, 'ALT': 8, 'SHIFT': 1}
 ORDER = ('SUPER', 'CTRL', 'SHIFT', 'ALT')
 DESCRIPTIONS = {'send': 'Send window to task', 'silent': 'Send window to task (stay here)',
-                'finish': 'Finish task', 'browser': 'New browser window here'}
-COMMANDS = {'send': 'send', 'silent': 'send --silent', 'finish': 'finish', 'browser': 'browser'}
+                'finish': 'Finish task', 'go': 'Go to task', 'browser': 'New browser window here'}
+COMMANDS = {'send': 'send', 'silent': 'send --silent', 'finish': 'finish', 'go': 'go', 'browser': 'browser'}
 COMMAND_DESCRIPTIONS = {COMMANDS[action]: DESCRIPTIONS[action] for action in COMMANDS}
 # Different spellings of keys setup can choose. Hyprland reports a key as written.
 KEY_ALIASES = {'ESC': 'ESCAPE', 'PRIOR': 'PAGE_UP', 'PAGEUP': 'PAGE_UP',
@@ -447,6 +509,7 @@ KEY_ALIASES = {'ESC': 'ESCAPE', 'PRIOR': 'PAGE_UP', 'PAGEUP': 'PAGE_UP',
 DIGITS = '0123456789'
 CANDIDATES = {'send': ('SUPER + SHIFT + T', 'SUPER + SHIFT + H', 'SUPER + SHIFT + J'),
               'finish': ('SUPER + SHIFT + D', 'SUPER + CTRL + D', 'SUPER + E'),
+              'go': ('SUPER + ALT + J',),
               'browser': ('SUPER + ALT + W', 'SUPER + ALT + C')}
 
 class SetupError(Exception):
@@ -624,7 +687,7 @@ def installed_keys(text):
         command = match[5]
         own = 'taskspaces' in command or any(re.search(r'\b' + re.escape(a) + r'\b', command)
                                                     for a in aliases)
-        action = re.search(r'[\'" ](send(?:\s+--silent)?|finish|browser)\s*[\'"]', command)
+        action = re.search(r'[\'" ](send(?:\s+--silent)?|finish|browser|go)\s*[\'"]', command)
         if own and action:
             result.append((match[2], action[1], text[:match.start()].count('\n') + 1))
     return result
@@ -687,7 +750,8 @@ def choose_key(wanted, action, selected, stock):
     candidates = CANDIDATES.get(action, ())
     if action == 'silent':
         candidates = [key_text((key[0] | MODS['ALT'], key[1]))
-                      for key in map(parse_key, CANDIDATES['send']) if not key[0] & MODS['ALT']]
+                      for key in map(parse_key, CANDIDATES['send'])
+                      if not key[0] & MODS['ALT'] and (key[0] | MODS['ALT'], key[1]) != parse_key('SUPER + ALT + T')]
     alternative = next((parse_key(key) for key in candidates if parse_key(key) not in used), None)
     title = key_text(wanted, True) + ' is already used by "' + used[wanted] + '"'
     rows = []
@@ -741,6 +805,19 @@ def consent(selected, block, remove):
             print('Back up your bindings first, then proceed? [y/N] ', end='', flush=True)
             return terminal.readline().strip().lower() in ('y', 'yes')
     raise SetupError('Setup needs the Omarchy menu or a terminal for consent; nothing changed.')
+
+
+def offer_go():
+    label = 'Add a "go to task" shortcut'
+    if shutil.which('omarchy-menu-select'):
+        return menu('Back to a task by name',
+                    ['󰉒\t' + label + '\tSuper+Alt+T',
+                     '󰁍\tNot now\tyou can run taskspaces go any time']) == label
+    if os.isatty(3):
+        print('Add a go to task shortcut (Super+Alt+T)? [y/N] ', end='', flush=True)
+        with os.fdopen(os.dup(3)) as terminal:
+            return terminal.readline().strip().lower() in ('y', 'yes')
+    return False
 
 
 def offer_browser():
@@ -806,6 +883,19 @@ def is_browser_bind(bind):
     return bind['dispatcher'] == '__lua' and bind.get('description') == COMMAND_DESCRIPTIONS['browser']
 
 
+def is_go_bind(bind):
+    if bind['dispatcher'] == '__lua':
+        return bind.get('description') == COMMAND_DESCRIPTIONS['go']
+    if bind['dispatcher'] == 'exec':
+        try:
+            args = shlex.split(bind['arg'])
+            return any(Path(word).name == 'taskspaces' and args[i + 1] == 'go'
+                       for i, word in enumerate(args[:-1]))
+        except ValueError:
+            return False
+    return False
+
+
 def setup():
     remove, dry = sys.argv[3:] == ['--remove'], sys.argv[3:] == ['--dry-run']
     helper = Path(sys.argv[1]).resolve()
@@ -825,13 +915,16 @@ def setup():
         span = managed_span(text)
         existing = installed_keys(text)
         supported = False
+        installed_actions = {action for _, action, _ in existing}
         if not remove:
-            browser_keys = [(key, action, line) for key, action, line in existing if action == 'browser']
-            if browser_keys:
-                message('Already set up: ' + ', '.join(clean(key) + ' browser' for key, _, _ in browser_keys) + '.')
-                return
             supported = default_browser()[2] is not None
-            if (span or existing) and (not span or not supported):
+            # Hand-added bindings have no managed insertion point.
+            if existing and not span:
+                keys = ', '.join(clean(key) + ' ' + action for key, action, _ in existing)
+                message('Already set up: ' + keys + '.')
+                return
+            if span and (('go' in installed_actions and ('browser' in installed_actions or not supported))
+                         or not shutil.which('hyprctl')):
                 keys = ', '.join(clean(key) + ' ' + action for key, action, _ in existing)
                 message('Already set up: ' + (keys or 'see the taskspaces block in your bindings file') + '.')
                 return
@@ -851,9 +944,14 @@ def setup():
         live = binds()
         if not remove:
             browser_keys = [key_text(bind_key(bind), True) for bind in live if is_browser_bind(bind)]
-            if browser_keys:
+            go_keys = [key_text(bind_key(bind), True) for bind in live if is_go_bind(bind)]
+            if browser_keys and not span:
                 message('Already set up: ' + ', '.join(key + ' browser' for key in browser_keys) + '.')
                 return
+            if browser_keys:
+                installed_actions.add('browser')
+            if go_keys:
+                installed_actions.add('go')
         selected = {}
         if remove:
             block = text[span[0]:span[1]]
@@ -881,12 +979,18 @@ def setup():
                 key = choose_key(wanted, action, selected, stock)
                 if key:
                     selected[action] = key
-            if supported and offer_browser():
+            if 'go' not in installed_actions and offer_go():
+                key = choose_key(parse_key('SUPER + ALT + T'), 'go', selected, stock)
+                if key:
+                    selected['go'] = key
+            if supported and 'browser' not in installed_actions and offer_browser():
                 key = choose_key(parse_key('SUPER + ALT + B'), 'browser', selected, stock)
                 if key:
                     selected['browser'] = key
             if not selected:
-                message('No shortcuts selected. Taskspaces still works from the command line.')
+                keys = ', '.join(clean(key) + ' ' + action for key, action, _ in existing)
+                message('Already set up: ' + (keys or 'no shortcuts added') + '.' if span else
+                        'No shortcuts selected. Taskspaces still works from the command line.')
                 return
             lines = [] if span else [START, 'local taskspaces_bin = ' + json.dumps(shlex.quote(str(helper)), ensure_ascii=False)]
             for action, key in selected.items():
@@ -894,7 +998,7 @@ def setup():
                              ', taskspaces_bin .. " ' + COMMANDS[action] + '")')
             if span:
                 # Preserve the old bindings and surrounding bytes on upgrade;
-                # only the newly chosen browser key needs consent and checking.
+                # only the newly chosen optional keys need consent and checking.
                 old_block = text[span[0]:span[1]]
                 marker = old_block.rfind(END)
                 newline = '\r\n' if '\r\n' in old_block else '\n'
@@ -966,6 +1070,8 @@ def setup():
                 parts.append(key_text(selected['finish'], True) + ' finishes it')
             if 'silent' in selected:
                 parts.append(key_text(selected['silent'], True) + ' sends without following')
+            if 'go' in selected:
+                parts.append(key_text(selected['go'], True) + ' goes to a task by name')
             if 'browser' in selected:
                 parts.append(key_text(selected['browser'], True) + ' opens a new browser window here')
             message('Ready: ' + ', '.join(parts) + '.')
@@ -985,6 +1091,7 @@ usage() {
   printf '%s\n' \
     'Usage: taskspaces send [--silent] [--address 0x…] [--dry-run]' \
     '       taskspaces finish [--dry-run]' \
+    '       taskspaces go [--dry-run]' \
     '       taskspaces browser' \
     '       taskspaces setup [--remove | --dry-run]' \
     '       taskspaces --help | --version'
@@ -996,6 +1103,7 @@ show_help() {
     'send             Move the focused window to a task workspace. The menu suggests a name.' \
     'send --silent    Move the window without switching to its workspace.' \
     'send --address   Act on the window at this address instead of the focused one.' \
+    'go               Go to a task by name without moving a window.' \
     'finish           Close or return the windows of the current task.' \
     'browser          Open a new browser window in the current workspace.' \
     'setup            Offer shortcuts and ask before changing your bindings.' \
@@ -1019,7 +1127,7 @@ main() {
   fi
   while (( $# )); do
     case $1 in
-      send|finish) [[ -z $command ]] || return 2; command=$1 ;;
+      send|finish|go) [[ -z $command ]] || return 2; command=$1 ;;
       --dry-run) dry=true ;;
       --silent) follow=false ;;
       --address) shift; requested_address=${1:?--address requires an address}; [[ $requested_address =~ ^0x[0-9a-fA-F]+$ ]] || return 2 ;;
@@ -1029,7 +1137,7 @@ main() {
     esac
     shift
   done
-  [[ -n $command ]] || { printf 'Expected send or finish\n' >&2; return 2; }
+  [[ -n $command ]] || { printf 'Expected send, finish or go\n' >&2; return 2; }
   require_commands || return 1
   state_dir=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is required}/taskspaces
   # Dry runs create no state, lock file, menus, notifications, or dispatches.

@@ -5,7 +5,7 @@ Thanks for helping. Taskspaces is one helper script and one bar widget, so small
 ## Before you start
 
 - For anything bigger than a typo or a small fix, open an issue first.
-- The command-line surface is part of the contract, because keybindings depend on it. `send`, `send --silent`, `finish`, `--help`, and `--version` need an issue before you change them.
+- The command-line surface is part of the contract, because keybindings depend on it. `send`, `send --silent`, `finish`, `go`, `setup`, `browser`, `--help`, and `--version` need an issue before you change them.
 
 ## Set up
 

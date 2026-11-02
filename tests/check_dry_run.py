@@ -14,6 +14,13 @@ try:
     assert case.dispatches() == []
     assert case.events('omarchy-menu-select') == []
     assert case.events('omarchy-menu-input') == []
+    print('CLI: taskspaces go --dry-run (mock compositor, no tasks)')
+    result = case.run_task('go', '--dry-run')
+    print(result.stdout)
+    assert not case.state.exists()
+    assert not (case.runtime / 'taskspaces.lock').exists()
+    assert case.dispatches() == []
+    assert case.events('omarchy-menu-select') == []
     case.state.mkdir()
     print('In-place creation helper with dry=true (mock input and compositor)')
     result = case.run_task(code='source "$1"; dry=true; state_dir="$XDG_RUNTIME_DIR/taskspaces"; make_workspace_task 2 kitty')
@@ -39,9 +46,10 @@ case.setUp()
 try:
     print('CLI: taskspaces setup --dry-run including browser (mock consent and compositor)')
     case.support_browser()
-    case.cfg['choices'] = ['Add a "new browser window here" shortcut', 'Yes']
+    case.cfg['choices'] = ['Add a "go to task" shortcut', 'Add a "new browser window here" shortcut', 'Yes']
     result = case.run_setup('--dry-run')
     print(result.stdout)
+    assert ' go")' in result.stdout
     assert ' browser")' in result.stdout
     case.unchanged()
     assert not (case.root / 'state').exists()
@@ -49,9 +57,10 @@ try:
     print('CLI: taskspaces setup --dry-run upgrading three shortcuts (mock consent and compositor)')
     core = case.core_block()
     case.support_browser()
-    case.cfg['choices'] = ['Add a "new browser window here" shortcut', 'Yes']
+    case.cfg['choices'] = ['Add a "go to task" shortcut', 'Add a "new browser window here" shortcut', 'Yes']
     result = case.run_setup('--dry-run')
     print(result.stdout)
+    assert ' go")' in result.stdout
     assert ' browser")' in result.stdout
     case.unchanged(core)
     print('PASS: browser upgrade preview changed no bindings, wrote no backups and did not reload.')
