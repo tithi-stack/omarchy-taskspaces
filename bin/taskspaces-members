@@ -145,7 +145,7 @@ class Pair:
         if any(r.get('enabled') is not False and r.get('persistent') and r.get('defaultName') for r in rules):
             live_table = ', '.join('[' + str(i) + '] = true' for i in sorted(owners))
             stale_table = ', '.join('[' + str(i) + '] = true' for i in sorted(stale))
-            code = ('-- taskspaces orphan cleanup\nlocal live = { ' + live_table
+            code = ('local live = { ' + live_table
                     + ' }; local stale = { ' + stale_table + ' }; '
                     + 'for key, r in pairs(_G.__taskspaces_rules or {}) do '
                     + 'local id = tonumber(key:match("^taskspaces:(%d+)$")); '

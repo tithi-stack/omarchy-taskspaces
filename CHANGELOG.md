@@ -17,6 +17,8 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- Start cleanup Lua with a statement so `hyprctl eval` does not parse a leading comment as a CLI flag; the compositor mock now rejects option-like eval/dispatch arguments.
+
 - Prepare and activate a normal Send destination before moving its chosen window, retaining the window at its source if preparation fails. Silent Send remains one window move with unchanged visible workspaces.
 - Release all owned member handles at Finish and orphaned handles at task refresh; recover a reused member still named by a dead record without moving or closing its windows. Paired allocation reuses eligible empty inactive numbered slots, preserving live windows, tasks and reservations.
 - Keep paired Finish fallbacks on each member's connected output; accept a numeric name during owned workspace creation; skip closed or changed split-back entries while restoring the remaining windows.

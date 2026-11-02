@@ -46,6 +46,9 @@ def save():
     refresh_rules()
     cfgpath.write_text(json.dumps(cfg))
 if cmd == 'hyprctl':
+    if args[0] in ('eval', 'dispatch') and args[1].startswith('-'):
+        print('usage: hyprctl [flags] [args...|--help]')
+        sys.exit(2)
     if args[0] in ('workspaces', 'clients', 'activewindow', 'activeworkspace', 'monitors', 'workspacerules'):
         save()
         if args[0] == 'clients' and 'polls_since_close' in cfg:
@@ -62,7 +65,7 @@ if cmd == 'hyprctl':
             print('mock rule failure'); sys.exit(0)
         cfg.setdefault('workspacerules', [])
         cfg.setdefault('owned_rules', {})
-        if code.startswith('-- taskspaces orphan cleanup'):
+        if code.startswith('local live = {'):
             live = {int(n) for n in re.findall(r'\[([0-9]+)\]', code.split('local stale')[0])}
             stale = {int(n) for n in re.findall(r'\[([0-9]+)\]', code.split('local stale')[1].split('for key')[0])}
             for key in list(cfg['owned_rules']):
