@@ -10,7 +10,7 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
-- Send menu groups window-moving rows before navigation and workspace naming, with explicit task destinations and a description on every row.
+- Send menu groups window-moving rows before navigation and workspace naming, with explicit task destinations and a description on every row; Move includes empty plain destinations in the bar’s always-show range and hides when none are available.
 
 - Task choices use names and window summaries, ordered by last use; plain workspaces have a separate window-summary list.
 - `taskspaces go` and the send menu's **Go to a task…** list return to a task without moving a window; send with no focused window opens the same list.

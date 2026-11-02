@@ -260,6 +260,22 @@ go_task() {
   dispatch "hl.dsp.focus({ workspace = $(lua_string "$target") })"
   mark_used "$target"
 }
+# Widget settings live inline in bar.layout entries in Omarchy's shell.json.
+# Use the widest configured always-show range when multiple entries provide it.
+plain_workspace_destinations() {
+  local source=$1 count config_file="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json"
+  count=$(jq -er '
+    select(.version == 1) | .bar.layout
+    | [(.left[]?, .center[]?, .right[]?) | .persistentWorkspaces?
+       | select(type == "number") | select(. >= 0 and floor == .)]
+    | if length > 0 then max else 5 end' "$config_file" 2>/dev/null) || count=5
+  jq -c --argjson count "$count" --argjson tasks "$tasks" --argjson source "$source" '
+    . as $live | ([$count, (.[] | .id | select(. > 0))] | max) as $highest
+    | [range(1; $highest + 1) as $id | select($id != $source)
+       | select(any($tasks[]; .id == $id) | not)
+       | (first($live[] | select(.id == $id)) // {id:$id, name:($id | tostring)})]
+  ' <<< "$workspaces"
+}
 send_task() {
   local window address cls title source return_source source_name suggested selection target name record candidate plain_workspaces plain_target=false started=false
   if [[ -n $requested_address ]]; then
@@ -289,7 +305,8 @@ send_task() {
   rows+=("$(printf '󰐗\t%s' "$first")")
   rows+=("$(printf '󰏫\t%s' "$typed")")
   build_task_rows "$source" send
-  rows+=("$(printf '󰁌\t%s' "$move")")
+  plain_workspaces=$(plain_workspace_destinations "$source")
+  [[ $plain_workspaces == '[]' ]] || rows+=("$(printf '󰁌\t%s' "$move")")
   [[ $tasks == '[]' ]] || rows+=("$(printf '󰉒\t%s' "$go")")
   local source_record
   source_record=$(jq -c --argjson source "$source" 'first(.[] | select(.id == $source)) // empty' <<< "$tasks")
@@ -333,12 +350,11 @@ send_task() {
   else
     target=''
     if [[ $selection == "$move" ]]; then
+      [[ $plain_workspaces != '[]' ]] || return 0
       local clients summary
       workspaces=$(hyprctl workspaces -j)
       prune
-      plain_workspaces=$(jq -c --argjson tasks "$tasks" --argjson source "$source" '
-        [.[] | select(.id > 0 and .id != $source)
-          | select(.id as $id | any($tasks[]; .id == $id) | not)] | sort_by(.id)' <<< "$workspaces")
+      plain_workspaces=$(plain_workspace_destinations "$source")
       clients=$(hyprctl clients -j)
       rows=()
       while IFS= read -r record; do
@@ -372,7 +388,16 @@ send_task() {
     fi
     [[ -n $target ]] || return 0
     workspaces=$(hyprctl workspaces -j)
-    jq -e --argjson id "$target" --arg name "$name" 'any(.[]; .id == $id and .name == $name)' <<< "$workspaces" >/dev/null || return 0
+    if $plain_target; then
+      # Empty destinations need not exist yet; reject one that became a task.
+      prune
+      plain_workspaces=$(plain_workspace_destinations "$source")
+      jq -e --argjson id "$target" --arg name "$name" \
+        'any(.[]; .id == $id and .name == $name)' <<< "$plain_workspaces" >/dev/null || return 0
+    else
+      jq -e --argjson id "$target" --arg name "$name" \
+        'any(.[]; .id == $id and .name == $name)' <<< "$workspaces" >/dev/null || return 0
+    fi
     move_window "$address" "$target" "$follow"
     if ! $plain_target; then mark_used "$target"; fi
   fi
