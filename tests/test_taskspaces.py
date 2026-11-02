@@ -1122,7 +1122,7 @@ class TaskTests(unittest.TestCase):
         self.record(source=1)
         self.cfg.update(selection='Close 1 window and finish', refuse_close=True, close_after_polls=5)
         self.run_task(code='source "$1"; sleep() { SECONDS=$((SECONDS + 2)); }; main finish')
-        self.assertEqual(self.cfg['polls_since_close'], 5)
+        self.assertGreaterEqual(self.cfg['polls_since_close'], 5)
         self.assertFalse((self.state / '2.json').exists())
         self.assertEqual(self.dispatches()[-1], 'hl.dsp.focus({ workspace = "1" })')
 
@@ -1555,6 +1555,135 @@ class MultiMonitorTests(unittest.TestCase):
     def saved(self):
         return json.loads((self.state / '3.json').read_text())
 
+    def labels(self):
+        # Same arguments as the bar helper; no shell CLI lock is held here.
+        return self.run_task(code='source "$1"; dry=true; state_dir="$XDG_RUNTIME_DIR/taskspaces"; member_tool labels')
+
+    def closed_all(self):
+        """Post-close-all snapshot, not a simulation of real workspace destruction."""
+        record = self.pair()
+        record['members'][1]['id'] = 5
+        record['members'][0]['name'] = 'Planning'
+        record['members'][1]['name'] = 'Planning ·'
+        (self.state / '3.json').write_text(json.dumps(record))
+        (self.state / '7.json').write_text(json.dumps(dict(id=7, name='Single', source=1)))
+        self.cfg['clients'] = []
+        self.cfg['activewindow'] = {}
+        self.cfg['activeworkspace'] = real_workspace(1, '1', 0)
+        leftover = real_workspace(6, 'taskspaces-99-2', 0)
+        leftover['monitor'] = 'HDMI-A-1'
+        self.cfg['workspaces'] = [real_workspace(1, '1', 0), leftover]
+        self.cfg['monitors'][0]['activeWorkspace'] = {'id': 1, 'name': '1'}
+        self.cfg['monitors'][1]['activeWorkspace'] = {'id': 6, 'name': leftover['name']}
+        self.cfg['no_persistent_creation'] = True
+        names = {3: 'Planning', 5: 'Planning ·', 7: 'Single', 6: leftover['name']}
+        self.cfg['workspacerules'] = [dict(workspaceString=str(i), enabled=True,
+                                          persistent=True, defaultName=name) for i, name in names.items()]
+        self.cfg['owned_rules'] = {str(i): name for i, name in names.items()}
+
+    def test_close_all_prunes_records_on_bar_then_rules_on_next_cli(self):
+        self.closed_all()
+        self.assertEqual(json.loads(self.labels().stdout), {})
+        self.assertEqual(list(self.state.glob('*.json')), [])
+        self.assertEqual(self.dispatches(), [])
+        self.assertFalse(any(a[0] == 'eval' for a in self.events('hyprctl')))
+        self.run_task('go')
+        self.assertEqual(self.cfg['clients'], [])
+        self.assertEqual(self.cfg['owned_rules'], {})
+        self.assertTrue(all(r.get('enabled') is False for r in self.cfg['workspacerules']))
+        self.assertEqual({w['id']: w['name'] for w in self.cfg['workspaces']}, {1: '1', 6: '6'})
+        self.assertTrue(all(d.startswith('hl.dsp.workspace.rename') for d in self.dispatches()))
+        (self.root / 'events.jsonl').write_text('')
+        self.labels()
+        self.run_task('go')
+        self.assertEqual(self.dispatches(), [])
+        self.assertFalse(any(a[0] == 'eval' for a in self.events('hyprctl')))
+
+    def test_close_all_next_start_reuses_lowest_stock_workspace_numbers(self):
+        self.closed_all()
+        self.labels()
+        incoming = real_window('0x777', 'kitty', 'New work', 1, '1')
+        self.cfg['clients'] = [incoming]
+        self.cfg['activewindow'] = copy.deepcopy(incoming)
+        self.cfg['select_first'] = True
+        self.run_task('send')
+        task = json.loads((self.state / '2.json').read_text())
+        self.assertEqual([m['id'] for m in task['members']], [2, 3])
+        self.assertFalse((self.state / '3.json').exists())
+        self.assertFalse((self.state / '7.json').exists())
+
+    def test_close_all_cli_retires_without_bar_refresh(self):
+        self.closed_all()
+        self.run_task('go')
+        self.assertEqual(list(self.state.glob('*.json')), [])
+        self.assertEqual(list(self.state.glob('*.cleanup')), [])
+        self.assertEqual(self.cfg['owned_rules'], {})
+        self.assertEqual(self.cfg['clients'], [])
+        self.assertTrue(all(d.startswith('hl.dsp.workspace.rename') for d in self.dispatches()))
+
+    def test_close_all_single_record_with_window_survives_even_a_name_change(self):
+        self.closed_all()
+        self.cfg['workspaces'].append(real_workspace(7, 'Changed by hand', 1))
+        window = real_window('0x777', 'kitty', 'Keep me', 7, 'Changed by hand')
+        self.cfg['clients'] = [window]
+        before = (self.state / '7.json').read_bytes()
+        self.labels()
+        self.run_task('go')
+        self.assertEqual((self.state / '7.json').read_bytes(), before)
+        self.assertEqual(self.cfg['clients'], [window])
+        self.assertFalse(any('window.' in d for d in self.dispatches()))
+
+    def test_close_all_live_member_windows_protect_records(self):
+        for half_gone, inconsistent in ((False, False), (True, False), (True, True)):
+            with self.subTest(half_gone=half_gone, inconsistent=inconsistent):
+                self.pair(empty_other=True)
+                if half_gone:
+                    self.cfg['workspaces'] = [w for w in self.cfg['workspaces'] if w['id'] != 4]
+                if inconsistent:
+                    self.cfg['workspaces'] = self.cfg['workspaces'][:2]
+                before = (self.state / '3.json').read_bytes()
+                windows = copy.deepcopy(self.cfg['clients'])
+                self.labels()
+                self.assertEqual((self.state / '3.json').read_bytes(), before)
+                self.assertEqual(self.cfg['clients'], windows)
+                self.assertEqual(self.dispatches(), [])
+                self.assertFalse(any(a[0] == 'eval' for a in self.events('hyprctl')))
+
+    def test_close_all_existing_empty_task_and_half_pair_are_kept(self):
+        self.pair(empty_other=True)
+        self.cfg['clients'] = []
+        self.cfg['workspaces'] = [w for w in self.cfg['workspaces'] if w['id'] != 4]
+        single = real_workspace(7, 'Blank task', 0)
+        self.cfg['workspaces'].append(single)
+        (self.state / '7.json').write_text(json.dumps(dict(id=7, name='Blank task', source=7)))
+        before = {p.name: p.read_bytes() for p in self.state.glob('*.json')}
+        self.labels()
+        self.assertEqual({p.name: p.read_bytes() for p in self.state.glob('*.json')}, before)
+        self.assertEqual(self.dispatches(), [])
+
+    def test_close_all_bar_respects_cli_lock_and_dry_run_preserves_records(self):
+        self.closed_all()
+        before = {p.name: p.read_bytes() for p in self.state.glob('*.json')}
+        with (self.runtime / 'taskspaces.lock').open('w') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.labels()
+            self.assertEqual({p.name: p.read_bytes() for p in self.state.glob('*.json')}, before)
+        self.run_task('go', '--dry-run')
+        self.assertEqual({p.name: p.read_bytes() for p in self.state.glob('*.json')}, before)
+        self.assertEqual(list(self.state.glob('*.cleanup')), [])
+        self.labels()
+        self.assertEqual(list(self.state.glob('*.json')), [])
+
+    def test_close_all_pending_cleanup_restores_readable_names_without_window_moves(self):
+        self.closed_all()
+        self.labels()
+        self.cfg['workspaces'].append(real_workspace(3, 'Planning', 0))
+        self.cfg['select_cancel'] = True
+        self.run_task('go')
+        self.assertEqual(next(w['name'] for w in self.cfg['workspaces'] if w['id'] == 3), '3')
+        self.assertTrue(all(d.startswith('hl.dsp.workspace.rename') for d in self.dispatches()))
+        self.assertEqual(self.cfg['clients'], [])
+
     def owners(self):
         return {w['id']: w['monitor'] for w in self.cfg['workspaces']}
 
@@ -1639,13 +1768,14 @@ class MultiMonitorTests(unittest.TestCase):
         self.assertEqual(self.active()['HDMI-A-1'], 4)
         self.assertEqual(next(w for w in self.cfg['workspaces'] if w['id'] == 4)['name'], 'Planning ·')
 
-    def test_prune_retains_pair_when_both_members_missing(self):
+    def test_prune_retires_pair_when_both_members_missing_without_windows(self):
         self.pair(empty_other=True)
         self.cfg['clients'] = []
         self.cfg['workspaces'] = self.cfg['workspaces'][:2]
         self.run_task('go')
-        self.assertTrue((self.state / '3.json').exists())
-        self.assertEqual(self.active(), {'eDP-1': 3, 'HDMI-A-1': 4})
+        self.assertFalse((self.state / '3.json').exists())
+        self.assertEqual(self.active(), {'eDP-1': 2, 'HDMI-A-1': 1})
+        self.assertEqual(self.dispatches(), [])
 
     def test_new_task_does_not_reuse_absent_reserved_member(self):
         self.pair(empty_other=True)

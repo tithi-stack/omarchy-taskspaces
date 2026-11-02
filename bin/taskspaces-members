@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Task membership, paired-output operations and read-only bar labels.
 
-Invoked under taskspaces' existing lock (except the read-only records/labels
-queries). No config files, compositor plugins or hot-plug listener are needed.
+CLI mutations use taskspaces' lock; labels can take it to retire dead records
+without compositor writes. No config files or hot-plug listener are needed.
 """
 import collections
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -72,18 +73,34 @@ def members(record, workspaces):
     return result
 
 
-def records(folder, workspaces, dry=True):
+def records(folder, workspaces, dry=True, clients=None):
     result = []
+    live_ids = {w['id'] for w in workspaces}
+    window_ids = {w['workspace']['id'] for w in clients or []}
+    window_ids.update(w['id'] for w in workspaces if w.get('windows', 0) > 0)
     for file in sorted(folder.glob('*.json')):
+        protected = file.stem.isdigit() and int(file.stem) in window_ids
         try:
             item = json.loads(file.read_text())
             if not (positive(item.get('id')) and positive(item.get('source'))
                     and isinstance(item.get('name'), str) and file.name == str(item['id']) + '.json'):
                 raise ValueError('invalid task')
-            # Legacy records retain their original live-name/prune semantics.
-            if 'members' not in item and not any(w['id'] == item['id'] and w['name'] == item['name'] for w in workspaces):
-                raise ValueError('stale legacy task')
+            legacy = 'members' not in item
             item['members'] = members(item, workspaces)
+            ids = {m['id'] for m in item['members']}
+            protected = bool(ids & window_ids)
+            # Existing blank workspaces remain tasks. Only a fully absent task
+            # is dead; client data also protects against inconsistent getters.
+            gone = clients is not None and not ids & live_ids
+            stale_legacy = legacy and not any(w['id'] == item['id'] and w['name'] == item['name'] for w in workspaces)
+            if (gone or stale_legacy) and not protected:
+                if not dry:
+                    # Keep names for lazy rule/name cleanup, outside *.json so
+                    # a bar refresh immediately frees the task's reservations.
+                    file.replace(file.with_suffix('.cleanup'))
+                continue
+            if stale_legacy:
+                continue  # Preserve a window-bearing record without claiming a renamed workspace.
             result.append(item)
         except (ValueError, KeyError, TypeError, OSError):
             # A damaged modern record may contain reservations/recovery data.
@@ -93,7 +110,7 @@ def records(folder, workspaces, dry=True):
                     modern = 'members' in json.loads(file.read_text())
                 except (ValueError, OSError):
                     modern = False
-                if not modern:
+                if not modern and not protected:
                     file.unlink(missing_ok=True)
     return result
 
@@ -155,6 +172,8 @@ class Pair:
         """
         if self.dry:
             return
+        self.cleanup_dead(tasks)
+        workspaces = self.read('workspaces')
         task_ids = {t['id'] for t in tasks}
         owners = {m['id']: t for t in tasks for m in t['members']}
         rules = self.read('workspacerules')
@@ -193,6 +212,23 @@ class Pair:
         for record in tasks:
             if record['id'] in repaired:
                 self.readable_members(record, force=True)
+
+    def cleanup_dead(self, tasks):
+        """Finish metadata-only retirement through the existing rule release."""
+        owned = {m['id'] for task in tasks for m in task['members']}
+        for file in sorted(self.folder.glob('*.cleanup')):
+            record = json.loads(file.read_text())
+            if not (positive(record.get('id')) and positive(record.get('source'))
+                    and isinstance(record.get('name'), str) and file.stem == str(record['id'])):
+                raise TaskError('Dead task cleanup record is invalid')
+            for member in members(record, self.read('workspaces')):
+                if member['id'] in owned:
+                    continue  # A new recorded task already owns this number.
+                self.rule(member, release=True)
+                names = {member['name'], record.get('pending_names', {}).get(str(member['id']))}
+                if any(w['id'] == member['id'] and w['name'] in names for w in self.read('workspaces')):
+                    self.rename(member, str(member['id']))
+            file.unlink()
 
     def free_ids(self, tasks, workspaces, extra=()):
         """For paired creation, reuse only empty, inactive ordinary slots."""
@@ -626,7 +662,9 @@ def main():
         sys.exit(0 if two_screen_enabled() else 1)
     elif action == 'records':
         workspaces = json.loads(args[0])
-        tasks = records(pair.folder, workspaces, pair.dry)
+        tasks = records(pair.folder, workspaces, pair.dry, pair.read('clients'))
+        if not pair.dry:
+            pair.cleanup_dead(tasks)
         defer_reconcile = args[1:] == ['without-reconcile'] and any(len(t['members']) > 1 for t in tasks)
         if not defer_reconcile:
             pair.reconcile(tasks, workspaces)
@@ -655,11 +693,20 @@ def main():
         pair.forget(record)
     elif action == 'labels':
         result = {}
-        workspaces = pair.read('workspaces')
-        for record in records(pair.folder, workspaces):
-            for member in record['members']:
-                if any(w['id'] == member['id'] and w['name'] == member['name'] for w in workspaces):
-                    result[str(member['id'])] = dict(name=record['name'], workspace_name=member['name'])
+        if pair.folder.is_dir():
+            # The bar passes true to prohibit compositor writes. Metadata-only
+            # retirement is safe under the same nonblocking lock as the CLI.
+            with (pair.folder.parent / 'taskspaces.lock').open('a') as lock:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    prune = True
+                except BlockingIOError:
+                    prune = False
+                workspaces = pair.read('workspaces')
+                for record in records(pair.folder, workspaces, not prune, pair.read('clients')):
+                    for member in record['members']:
+                        if any(w['id'] == member['id'] and w['name'] == member['name'] for w in workspaces):
+                            result[str(member['id'])] = dict(name=record['name'], workspace_name=member['name'])
         print(json.dumps(result))
     elif action == 'new':
         wid, name, source, source_name, window, follow, adopt = args

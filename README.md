@@ -146,7 +146,7 @@ If the Go-to list has no tasks, the notification reads `No tasks yet`.
 
 On an empty numbered workspace, the send key opens **Task** with **Turn this workspace into a task…** (`name this empty workspace` in grey), or **Rename this task…** (`change this empty task name`) if it is already a task. **Go to a task…** (`switch to another task`) appears when other tasks exist. Naming uses the same **Task name** prompt and keeps you here.
 
-For an existing single-workspace task that is not persistent, the confirmation adds `open a window before leaving or this name will be lost`. Hyprland drops that workspace when you leave it empty; its name disappears, and Taskspaces removes its record on the next task refresh. Open a window before switching away to keep the task. This warning does not apply to new paired tasks, whose missing areas remain recorded and recover on Go. Other workspaces without a focused window keep the Go-to list fallback.
+For an existing single-workspace task that is not persistent, the confirmation adds `open a window before leaving or this name will be lost`. Hyprland drops that workspace when you leave it empty; its name disappears, and Taskspaces removes its record on the next task refresh. Open a window before switching away to keep the task. Experimental two-screen tasks keep missing areas recoverable while at least one area exists; when all areas are gone and no windows remain, the next bar refresh or task action retires the record, and the next task action releases its rules and restores surviving task workspace names. Other workspaces without a focused window keep the Go-to list fallback.
 
 ## Opening more windows in a task
 
