@@ -10,6 +10,8 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- Send menu groups window-moving rows before navigation and workspace naming, with explicit task destinations and a description on every row.
+
 - Task choices use names and window summaries, ordered by last use; plain workspaces have a separate window-summary list.
 - `taskspaces go` and the send menu's **Go to a task…** list return to a task without moving a window; send with no focused window opens the same list.
 - Setup offers an optional **Go to task** shortcut with consent, conflict checks, backups, verification, preview and removal, including upgrades of existing managed bindings.

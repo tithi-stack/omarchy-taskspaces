@@ -75,7 +75,10 @@ elif cmd == 'omarchy-menu-select':
     for record in cfg.get('menu_records', []):
         (root / 'runtime' / 'taskspaces' / f'{record["id"]}.json').write_text(json.dumps(record))
     save()
-    print(cfg['selections'].pop(0) if cfg.get('selections') else cfg.get('selection', 'Cancel'))
+    if cfg.get('select_first'):
+        print(args[1].split('\t', 1)[1])
+    else:
+        print(cfg['selections'].pop(0) if cfg.get('selections') else cfg.get('selection', 'Cancel'))
     save()
 elif cmd == 'omarchy-menu-input':
     cfg.update(cfg.get('input_updates', {}))
@@ -130,7 +133,7 @@ class TaskTests(unittest.TestCase):
                'workspace': {'id': 2, 'name': '2'}}
         self.cfg = {'workspaces': [{'id': 1, 'name': '1'}, {'id': 2, 'name': '2'}],
                     'activewindow': win, 'clients': [win], 'activeworkspace': {'id': 2, 'name': '2'},
-                    'selection': 'Turn this workspace into a task…\twindows stay where they are'}
+                    'selection': 'Turn this workspace into a task…\tname this workspace · windows stay here'}
         self.write_cfg()
 
     def write_cfg(self):
@@ -185,7 +188,7 @@ class TaskTests(unittest.TestCase):
     def test_real_hyprland_shapes_work_for_send_and_finish(self):
         self.use_real_shapes([real_window('0xabc', 'com.mitchellh.ghostty', 'Fix login bug', 1, '1'),
                               real_window('0xdef', 'google-chrome', 'Docs - Google Chrome', -98, 'special:scratchpad')])
-        self.cfg['selection'] = 'Start task "Fix login bug"\tname suggested from the window title'
+        self.cfg['selection'] = 'Start task "Fix login bug"\tsuggested from window title · moves this window'
         self.run_task('send')
         self.assertEqual(self.dispatches()[-2:], [
             'hl.dsp.window.move({ window = "address:0xabc", workspace = "3", follow = true })',
@@ -204,7 +207,7 @@ class TaskTests(unittest.TestCase):
     def test_real_hyprland_window_on_special_workspace_is_sent_and_returns_to_one(self):
         self.use_real_shapes([real_window('0xabc', 'kitty', 'Scratch', -98, 'special:scratchpad')])
         self.cfg['workspaces'].append(real_workspace(-98, 'special:scratchpad'))
-        self.cfg['selection'] = 'Start task "Scratch"\tname suggested from the window title'
+        self.cfg['selection'] = 'Start task "Scratch"\tsuggested from window title · moves this window'
         self.run_task('send')
         record = json.loads((self.state / '3.json').read_text())
         self.assertEqual((record['source'], record['source_name']), (1, '1'))
@@ -234,14 +237,116 @@ class TaskTests(unittest.TestCase):
         self.cfg['selection'] = 'Cancel'
         self.run_task('send')
         self.assertEqual(self.menu()[1:-3], [
-            '󰐗\tStart task "Planning"\tname suggested from the window title',
+            '󰐗\tStart task "Planning"\tsuggested from window title · moves this window',
+            '󰏫\tStart task with my own name…\ttype a custom name · moves this window',
+            '󰁌\tSend to "Field Job Posting"\tFiles · moves this window',
+            '󰁌\tSend to "Quarterly budget"\tTerminal ×2 · moves this window',
+            '󰁌\tMove to another workspace…\tpick a plain workspace · moves this window',
+            '󰉒\tGo to a task…\tswitch tasks · leaves this window here',
+            '󰉗\tTurn this workspace into a task…\tname this workspace · windows stay here'])
+        self.assert_no_moves()
+
+    def test_menu_situation_1_plain_workspace_without_tasks(self):
+        self.cfg['selection'] = 'Cancel'
+        self.run_task('send')
+        self.assertEqual(self.menu(), [
+            'Task',
+            '󰐗\tStart task "Planning"\tsuggested from window title · moves this window',
+            '󰏫\tStart task with my own name…\ttype a custom name · moves this window',
+            '󰁌\tMove to another workspace…\tpick a plain workspace · moves this window',
+            '󰉗\tTurn this workspace into a task…\tname this workspace · windows stay here',
+            '--', '--width', '600'])
+        self.assert_no_effect()
+
+    def test_menu_situation_2_browser_on_plain_workspace_with_parked_task(self):
+        self.parked()
+        (self.state / '4.json').unlink()
+        self.cfg['activewindow']['class'] = 'google-chrome'
+        self.cfg['selection'] = 'Cancel'
+        self.run_task('send')
+        self.assertEqual(self.menu(), [
+            'Task',
+            '󰐗\tStart task "Planning"\tsuggested from window title · whole window (all tabs) · moves this window',
+            '󰏫\tStart task with my own name…\ttype a custom name · moves this window',
+            '󰁌\tSend to "Field Job Posting"\tFiles · moves this window',
+            '󰁌\tMove to another workspace…\tpick a plain workspace · moves this window',
+            '󰉒\tGo to a task…\tswitch tasks · leaves this window here',
+            '󰉗\tTurn this workspace into a task…\tname this workspace · windows stay here',
+            '--', '--width', '600'])
+        self.assert_no_moves()
+
+    def test_menu_situation_3_window_in_active_task(self):
+        self.parked()
+        self.record(name='Current task')
+        self.cfg['selection'] = 'Cancel'
+        self.run_task('send')
+        self.assertEqual(self.menu(), [
+            'Task',
+            '󰐗\tStart task "Planning"\tsuggested from window title · moves this window',
+            '󰏫\tStart task with my own name…\ttype a custom name · moves this window',
+            '󰁌\tSend to "Field Job Posting"\tFiles · moves this window',
+            '󰁌\tSend to "Quarterly budget"\tTerminal ×2 · moves this window',
+            '󰁌\tMove to another workspace…\tpick a plain workspace · moves this window',
+            '󰉒\tGo to a task…\tswitch tasks · leaves this window here',
+            '󰏫\tRename this task…\tchange task name · windows stay here',
+            '--', '--width', '600'])
+        self.assert_no_moves()
+
+    def test_menu_situation_4_named_plain_workspace(self):
+        self.parked()
+        self.cfg['workspaces'][1]['name'] = 'Desk'
+        self.cfg['selection'] = 'Cancel'
+        self.run_task('send')
+        self.assertEqual(self.menu(), [
+            'Task',
+            '󰐗\tStart task "Planning"\tsuggested from window title · moves this window',
+            '󰏫\tStart task with my own name…\ttype a custom name · moves this window',
+            '󰁌\tSend to "Field Job Posting"\tFiles · moves this window',
+            '󰁌\tSend to "Quarterly budget"\tTerminal ×2 · moves this window',
+            '󰁌\tMove to another workspace…\tpick a plain workspace · moves this window',
+            '󰉒\tGo to a task…\tswitch tasks · leaves this window here',
+            '--', '--width', '600'])
+        self.assert_no_moves()
+
+    def test_menu_situation_5_no_focused_window_keeps_go_list(self):
+        self.parked()
+        self.cfg['activewindow'] = {}
+        self.cfg['selection'] = 'Cancel'
+        self.run_task('send')
+        self.assertEqual(self.menu(), [
+            'Go to task',
             '󰉒\tField Job Posting\tFiles',
             '󰉒\tQuarterly budget\tTerminal ×2',
-            '󰉒\tGo to a task…\tleave this window here',
-            '󰏫\tStart task with my own name…',
-            '󰉗\tTurn this workspace into a task…\twindows stay where they are',
-            '󰉒\tMove to another workspace…'])
+            '--', '--width', '600'])
         self.assert_no_moves()
+
+    def test_default_first_row_starts_suggested_task_with_parked_tasks(self):
+        self.parked()
+        self.cfg['select_first'] = True
+        self.run_task('send')
+        self.assertEqual(self.menu()[1],
+                         '󰐗\tStart task "Planning"\tsuggested from window title · moves this window')
+        self.assertEqual(self.menu()[-3:], ['--', '--width', '600'])
+        self.assertEqual(json.loads((self.state / '5.json').read_text())['name'], 'Planning')
+        self.assertEqual(self.dispatches()[-1],
+                         'hl.dsp.workspace.rename({ workspace = "5", name = "Planning" })')
+
+    def test_send_task_named_like_action_row_and_empty_summary(self):
+        for name in ('Go to a task…', 'Move to another workspace…',
+                     'Start task with my own name…', 'Rename this task…',
+                     'Turn this workspace into a task…'):
+            with self.subTest(name=name):
+                self.cfg['workspaces'] = [{'id': 1, 'name': '1'}, {'id': 2, 'name': '2'},
+                                          {'id': 3, 'name': name}]
+                (self.state / '3.json').write_text(json.dumps({'id': 3, 'name': name, 'source': 1}))
+                self.cfg['selection'] = f'Send to "{name}"\tno windows yet · moves this window'
+                self.run_task('send')
+                self.assertEqual(self.dispatches()[-1],
+                                 'hl.dsp.window.move({ window = "address:0xabc", workspace = "3", follow = true })')
+                self.assertEqual(self.events('omarchy-menu-input'), [])
+                self.assertEqual(self.events('omarchy-notification-send')[-1][-1], f'Sent to "{name}"')
+                # The focused window moves back only in the mock fixture for the next case.
+                self.cfg['clients'] = [copy.deepcopy(self.cfg['activewindow'])]
 
     def assert_no_moves(self):
         self.assertFalse(any('window.move' in call for call in self.dispatches()))
@@ -262,7 +367,7 @@ class TaskTests(unittest.TestCase):
 
     def test_send_empty_and_go_row_open_same_go_list(self):
         self.parked()
-        self.cfg['selections'] = ['Go to a task…\tleave this window here', 'Field Job Posting\tFiles']
+        self.cfg['selections'] = ['Go to a task…\tswitch tasks · leaves this window here', 'Field Job Posting\tFiles']
         self.run_task('send', '--silent')
         self.assertEqual(self.dispatches(), ['hl.dsp.focus({ workspace = "3" })'])
         self.cfg['activewindow'] = {}
@@ -274,7 +379,7 @@ class TaskTests(unittest.TestCase):
     def test_send_named_task_shared_suggestion_and_silent(self):
         self.parked()
         self.cfg['activewindow']['title'] = 'Field technician job description.pdf'
-        self.cfg['selection'] = 'Field Job Posting\tFiles'
+        self.cfg['selection'] = 'Send to "Field Job Posting"\tFiles · moves this window'
         self.run_task('send', '--silent')
         self.assertEqual(self.dispatches(), [
             'hl.dsp.window.move({ window = "address:0xabc", workspace = "3", follow = false })'])
@@ -283,15 +388,18 @@ class TaskTests(unittest.TestCase):
 
     def test_task_selection_requires_complete_row(self):
         self.parked()
-        for selection in ('Field Job Posting', 'Field Job Posting\twrong', 'hl.dsp.focus({})'):
+        for selection in ('Field Job Posting', 'Field Job Posting\twrong', 'hl.dsp.focus({})',
+                          'Send to "Field Job Posting"',
+                          'Send to "Field Job Posting"\twrong'):
             self.cfg['selection'] = selection
             self.run_task('send')
             self.run_task('go')
         self.assertEqual(self.dispatches(), [])
+        self.assertEqual(self.events('omarchy-notification-send'), [])
 
     def test_plain_workspaces_second_menu_uses_windows(self):
         self.cfg['clients'].append(real_window('0xdef', 'org.gnome.Nautilus', 'Folder', 1, '1'))
-        self.cfg['selections'] = ['Move to another workspace…', 'Files\tworkspace 1']
+        self.cfg['selections'] = ['Move to another workspace…\tpick a plain workspace · moves this window', 'Files\tworkspace 1']
         self.run_task('send')
         self.assertEqual(self.menu()[1:-3], ['󰉒\tFiles\tworkspace 1'])
         self.assertEqual(self.events('omarchy-notification-send')[-1][-1], 'Moved to "Files"')
@@ -299,9 +407,9 @@ class TaskTests(unittest.TestCase):
             'hl.dsp.window.move({ window = "address:0xabc", workspace = "1", follow = true })'])
 
     def test_used_on_suggested_typed_and_in_place_start(self):
-        for label in ('Start task "Planning"\tname suggested from the window title',
-                      'Start task with my own name…',
-                      'Turn this workspace into a task…\twindows stay where they are'):
+        for label in ('Start task "Planning"\tsuggested from window title · moves this window',
+                      'Start task with my own name…\ttype a custom name · moves this window',
+                      'Turn this workspace into a task…\tname this workspace · windows stay here'):
             with self.subTest(label=label):
                 for file in self.state.glob('*.json'):
                     file.unlink()
@@ -329,13 +437,13 @@ class TaskTests(unittest.TestCase):
     def test_parked_task_acceptance_walkthrough(self):
         # Start a named browser task, then a suggested terminal task elsewhere.
         self.cfg['activewindow']['class'] = 'google-chrome'
-        self.cfg.update(selection='Start task with my own name…', input='Field Job Posting')
+        self.cfg.update(selection='Start task with my own name…\ttype a custom name · moves this window', input='Field Job Posting')
         self.run_task('send')
         self.assertEqual(next(w for w in self.cfg['workspaces'] if w['id'] == 3)['name'], 'Field Job Posting')
         terminal = real_window('0xdef', 'kitty', 'Quarterly budget', 2, '2')
         self.cfg['clients'].append(terminal)
         self.cfg['activewindow'] = copy.deepcopy(terminal)
-        self.cfg['selection'] = 'Start task "Quarterly budget"\tname suggested from the window title'
+        self.cfg['selection'] = 'Start task "Quarterly budget"\tsuggested from window title · moves this window'
         self.run_task('send')
         self.assertEqual(next(w for w in self.cfg['workspaces'] if w['id'] == 4)['name'], 'Quarterly budget')
         for address, silent in (('0xa1', False), ('0xa2', True)):
@@ -344,7 +452,7 @@ class TaskTests(unittest.TestCase):
             self.cfg['activewindow'] = copy.deepcopy(window)
             # The full row for the parked task is distinct from the suggested name.
             summary = 'Chrome' if not silent else 'Chrome, Files'
-            self.cfg['selection'] = 'Field Job Posting\t' + summary
+            self.cfg['selection'] = 'Send to "Field Job Posting"\t' + summary + ' · moves this window'
             self.run_task('send', *(['--silent'] if silent else []))
             self.assertEqual(self.dispatches()[-1],
                              f'hl.dsp.window.move({{ window = "address:{address}", workspace = "3", follow = {str(not silent).lower()} }})')
@@ -384,16 +492,17 @@ class TaskTests(unittest.TestCase):
         for cls in ('kitty', 'google-chrome'):
             with self.subTest(cls=cls):
                 self.cfg['activewindow']['class'] = cls
-                description = 'name suggested from the window title'
+                description = 'suggested from window title'
                 if cls == 'google-chrome':
                     description += ' · whole window (all tabs)'
+                description += ' · moves this window'
                 self.cfg['selection'] = 'Start task "Planning"\t' + description
                 self.run_task('send')
                 self.assertEqual(self.menu()[1:-3], [
                     '󰐗\tStart task "Planning"\t' + description,
-                    '󰏫\tStart task with my own name…',
-                    '󰉗\tTurn this workspace into a task…\twindows stay where they are',
-                    '󰉒\tMove to another workspace…',
+                    '󰏫\tStart task with my own name…\ttype a custom name · moves this window',
+                    '󰁌\tMove to another workspace…\tpick a plain workspace · moves this window',
+                    '󰉗\tTurn this workspace into a task…\tname this workspace · windows stay here',
                 ])
                 self.assertEqual(self.menu()[-3:], ['--', '--width', '600'])
                 self.assertEqual(self.dispatches()[-2:], [
@@ -406,7 +515,7 @@ class TaskTests(unittest.TestCase):
                 (self.state / '3.json').unlink()
 
     def test_typed_send_name_with_quotes_is_sanitized(self):
-        self.cfg.update(selection='Start task with my own name…', input='Plan "review"')
+        self.cfg.update(selection='Start task with my own name…\ttype a custom name · moves this window', input='Plan "review"')
         self.run_task('send')
         self.assertEqual(self.events('omarchy-menu-input'), [['Task name']])
         self.assertEqual(self.dispatches(), [
@@ -418,7 +527,7 @@ class TaskTests(unittest.TestCase):
     def test_fallback_class_is_sanitized_before_menu_and_prompt(self):
         self.cfg['activewindow'].update({'class': 'demo"app\\tool', 'title': 'Untitled'})
         name = 'Demoapptool task'
-        self.cfg['selection'] = f'Start task "{name}"\tname suggested from the window title'
+        self.cfg['selection'] = f'Start task "{name}"\tsuggested from window title · moves this window'
         self.run_task('send')
         self.assertIn('\U000f0417' + '\t' + self.cfg['selection'], self.menu())
         self.assertEqual(json.loads((self.state / '3.json').read_text())['name'], name)
@@ -433,7 +542,7 @@ class TaskTests(unittest.TestCase):
     def test_long_suggested_name_is_capped_without_changing_row_wording(self):
         self.cfg['activewindow']['title'] = 'Team ' * 7 + 'notes'
         name = 'Team ' * 6 + 'Team…'
-        self.cfg['selection'] = f'Start task "{name}"\tname suggested from the window title'
+        self.cfg['selection'] = f'Start task "{name}"\tsuggested from window title · moves this window'
         self.run_task('send')
         self.assertIn('\U000f0417' + '\t' + self.cfg['selection'], self.menu())
         self.assertLessEqual(len(self.menu()[1].split('\t')[1]), 50)
@@ -494,9 +603,9 @@ class TaskTests(unittest.TestCase):
         name = 'Plan "review"'
         self.cfg['workspaces'].append({'id': 3, 'name': name})
         (self.state / '3.json').write_text(json.dumps({'id': 3, 'name': name, 'source': 1}))
-        self.cfg['selection'] = f'{name}\tNo windows'
+        self.cfg['selection'] = f'Send to "{name}"\tno windows yet · moves this window'
         self.run_task('send')
-        self.assertIn('󰉒\t' + self.cfg['selection'], self.menu())
+        self.assertIn('󰁌\t' + self.cfg['selection'], self.menu())
         self.assertEqual(self.dispatches(), [
             'hl.dsp.window.move({ window = "address:0xabc", workspace = "3", follow = true })',
         ])
@@ -511,7 +620,7 @@ class TaskTests(unittest.TestCase):
                                           {'id': source, 'name': 'special:scratch'}]
                 self.cfg['activewindow']['workspace'] = {'id': source, 'name': 'special:scratch'}
                 self.cfg['clients'] = [copy.deepcopy(self.cfg['activewindow'])]
-                self.cfg['selection'] = 'Start task "Planning"\tname suggested from the window title'
+                self.cfg['selection'] = 'Start task "Planning"\tsuggested from window title · moves this window'
                 self.run_task('send')
                 record = json.loads((self.state / '3.json').read_text())
                 self.assertEqual((record['source'], record['source_name']), (1, '1'))
@@ -594,7 +703,7 @@ class TaskTests(unittest.TestCase):
 
     def test_chained_task_records_source_identity_but_never_returns_into_task(self):
         parent = self.record(name='Parent')
-        self.cfg['selection'] = 'Start task "Planning"\tname suggested from the window title'
+        self.cfg['selection'] = 'Start task "Planning"\tsuggested from window title · moves this window'
         self.run_task('send')
         child = json.loads((self.state / '3.json').read_text())
         self.assertEqual((child['source'], child['source_name']), (2, 'Parent'))
@@ -629,10 +738,10 @@ class TaskTests(unittest.TestCase):
                 self.cfg['activewindow']['title'] = '2'
                 self.cfg['input'] = '2'
                 self.cfg['selection'] = {
-                    'suggest': 'Start task "Task 2"\tname suggested from the window title',
-                    'type': 'Start task with my own name…',
-                    'adopt': 'Turn this workspace into a task…\twindows stay where they are',
-                    'rename': 'Rename this task…',
+                    'suggest': 'Start task "Task 2"\tsuggested from window title · moves this window',
+                    'type': 'Start task with my own name…\ttype a custom name · moves this window',
+                    'adopt': 'Turn this workspace into a task…\tname this workspace · windows stay here',
+                    'rename': 'Rename this task…\tchange task name · windows stay here',
                 }[action]
                 if action == 'rename':
                     self.record()
@@ -650,7 +759,7 @@ class TaskTests(unittest.TestCase):
         self.cfg['activewindow']['title'] = 'Team ' * 7 + 'notes'
         self.cfg['workspaces'].append({'id': 3, 'name': base})
         expected = base[:33] + ' 2'
-        self.cfg['selection'] = f'Start task "{expected}"\tname suggested from the window title'
+        self.cfg['selection'] = f'Start task "{expected}"\tsuggested from window title · moves this window'
         self.run_task('send')
         self.assertIn('󰐗\t' + self.cfg['selection'], self.menu())
         self.assertEqual(json.loads((self.state / '4.json').read_text())['name'], expected)
@@ -741,7 +850,7 @@ class TaskTests(unittest.TestCase):
     def test_existing_task_has_rename_only(self):
         self.record(source=1)
         self.run_task('send')
-        self.assertIn('󰏫\tRename this task…', self.menu())
+        self.assertIn('󰏫\tRename this task…\tchange task name · windows stay here', self.menu())
         self.assertFalse(any('Turn this workspace' in row for row in self.menu()))
         self.assertEqual(self.dispatches(), [])
 
@@ -838,7 +947,7 @@ class TaskTests(unittest.TestCase):
 
     def test_renaming_adopted_task_preserves_in_place_marker(self):
         self.record()
-        self.cfg.update(selection='Rename this task…', input='Revised')
+        self.cfg.update(selection='Rename this task…\tchange task name · windows stay here', input='Revised')
         self.run_task('send')
         record = json.loads((self.state / '2.json').read_text())
         self.assertEqual((record['name'], record['source'], record['id']), ('Revised', 2, 2))
@@ -849,12 +958,12 @@ class TaskTests(unittest.TestCase):
         self.cfg['selection'] = 'Cancel'
         self.run_task('send')
         self.assertEqual(self.menu()[1:-3], [
-            '󰐗\tStart task "Planning 2"\tname suggested from the window title',
-            '󰉒\tPlanning\tTerminal',
-            '󰉒\tGo to a task…\tleave this window here',
-            '󰏫\tStart task with my own name…',
-            '󰉗\tTurn this workspace into a task…\twindows stay where they are',
-            '󰉒\tMove to another workspace…'])
+            '󰐗\tStart task "Planning 2"\tsuggested from window title · moves this window',
+            '󰏫\tStart task with my own name…\ttype a custom name · moves this window',
+            '󰁌\tSend to "Planning"\tTerminal · moves this window',
+            '󰁌\tMove to another workspace…\tpick a plain workspace · moves this window',
+            '󰉒\tGo to a task…\tswitch tasks · leaves this window here',
+            '󰉗\tTurn this workspace into a task…\tname this workspace · windows stay here'])
 
     def test_lock_contention_changes_nothing(self):
         with (self.runtime / 'taskspaces.lock').open('w') as lock:

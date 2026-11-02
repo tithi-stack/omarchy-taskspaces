@@ -22,6 +22,19 @@ try:
     assert case.dispatches() == []
     assert case.events('omarchy-menu-select') == []
     case.state.mkdir()
+    print('CLI: taskspaces send --dry-run with parked tasks (mock compositor)')
+    case.parked()
+    before = {p.name: p.read_bytes() for p in case.state.iterdir()}
+    result = case.run_task('send', '--dry-run')
+    print(result.stdout)
+    assert 'name: Planning;' in result.stdout
+    assert 'Started task "Planning"' in result.stdout
+    assert before == {p.name: p.read_bytes() for p in case.state.iterdir()}
+    assert case.dispatches() == []
+    assert case.events('omarchy-menu-select') == []
+    assert not (case.runtime / 'taskspaces.lock').exists()
+    for path in case.state.iterdir():
+        path.unlink()
     print('In-place creation helper with dry=true (mock input and compositor)')
     result = case.run_task(code='source "$1"; dry=true; state_dir="$XDG_RUNTIME_DIR/taskspaces"; make_workspace_task 2 kitty')
     print(result.stdout)

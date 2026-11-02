@@ -52,17 +52,17 @@ It launches `uwsm-app -- <browser> --profile-directory=<folder> --new-window abo
 
 ## Send menu
 
-`taskspaces send` opens a menu. Rows that do not apply to your current workspace are hidden.
+`taskspaces send` opens a menu with the rows that move this window first, followed by the rows that leave it here. Every row has a grey description. Rows that do not apply to your current workspace are hidden. Enter starts a task with the suggested name.
 
 | Icon | Row | Grey line | Shown when | What it does |
 |---|---|---|---|---|
-| 󰐗 | `Start task "<name>"` | `name suggested from the window title`; Chrome adds ` · whole window (all tabs)` | Always | Creates a task with the suggested name |
-| 󰉒 | `<task name>` | Window summary, such as `Files, Terminal ×2` | Other tasks | Sends the window to that task |
-| 󰉒 | **Go to a task…** | `leave this window here` | Tasks exist | Opens the Go-to list |
-| 󰏫 | **Start task with my own name…** | — | Always | Creates a task with a name you type |
-| 󰏫 | **Rename this task…** | — | On a task workspace | Renames the task |
-| 󰉗 | **Turn this workspace into a task…** | `windows stay where they are` | On a plain numbered workspace | Names the current workspace as a task |
-| 󰉒 | **Move to another workspace…** | — | Always | Opens a list of other plain workspaces |
+| 󰐗 | `Start task "<name>"` | `suggested from window title · moves this window`; Chrome includes `whole window (all tabs)` before the move description | Always | Creates a task with the suggested name |
+| 󰏫 | **Start task with my own name…** | `type a custom name · moves this window` | Always | Creates a task with a name you type |
+| 󰁌 | `Send to "<task>"` | Window summary followed by `· moves this window`; `no windows yet` for an empty task | Other tasks | Sends the window to that task |
+| 󰁌 | **Move to another workspace…** | `pick a plain workspace · moves this window` | Always | Opens a list of other plain workspaces |
+| 󰉒 | **Go to a task…** | `switch tasks · leaves this window here` | Tasks exist | Opens the Go-to list |
+| 󰉗 | **Turn this workspace into a task…** | `name this workspace · windows stay here` | On a plain numbered workspace | Names the current workspace as a task |
+| 󰏫 | **Rename this task…** | `change task name · windows stay here` | On a task workspace | Renames the task |
 
 Task rows appear most recently used first; records without a `used` time sort last.
 The plain-workspace list uses window summaries as labels, `No windows` for an empty workspace, and the workspace number only in grey.

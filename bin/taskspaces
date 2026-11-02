@@ -217,13 +217,19 @@ mark_used() {
   mv -- "$pending" "$state_dir/$1.json"
 }
 build_task_rows() {
-  local excluded=${1:-0} record candidate summary clients
+  local excluded=${1:-0} mode=${2:-go} record candidate summary clients
   clients=$(hyprctl clients -j)
   while IFS= read -r record; do
     candidate=$(jq -r .id <<< "$record")
     summary=$(window_summary "$(jq -c --argjson id "$candidate" '[.[] | select(.workspace.id == $id and .mapped != false)]' <<< "$clients")")
     task_rows[$candidate]="$(jq -r .name <<< "$record")"$'\t'"$summary"
-    rows+=("$(printf '󰉒\t%s' "${task_rows[$candidate]}")")
+    if [[ $mode == send ]]; then
+      [[ -n $summary && $summary != 'No windows' ]] || summary='no windows yet'
+      task_rows[$candidate]="Send to \"$(jq -r .name <<< "$record")\""$'\t'"$summary · moves this window"
+      rows+=("$(printf '󰁌\t%s' "${task_rows[$candidate]}")")
+    else
+      rows+=("$(printf '󰉒\t%s' "${task_rows[$candidate]}")")
+    fi
   done < <(jq -c --argjson excluded "$excluded" '
     sort_by([(if (.used | type) == "number" then 0 else 1 end),
       -(if (.used | type) == "number" then .used else 0 end), .id])[]
@@ -270,17 +276,21 @@ send_task() {
   (( return_source > 0 )) || return_source=1
   source_name=$(jq -r --argjson id "$return_source" 'first(.[] | select(.id == $id)).name // ($id | tostring)' <<< "$workspaces")
   suggested=$(dedupe "$(suggest_name "$cls" "$title")" 35)
-  local first="Start task \"$suggested\""$'\tname suggested from the window title'
-  local typed='Start task with my own name…' rename='Rename this task…'
-  local adopt=$'Turn this workspace into a task…\twindows stay where they are' can_adopt=false
-  local go=$'Go to a task…\tleave this window here' move='Move to another workspace…'
+  local first="Start task \"$suggested\""$'\tsuggested from window title'
+  local typed=$'Start task with my own name…\ttype a custom name · moves this window'
+  local rename=$'Rename this task…\tchange task name · windows stay here'
+  local adopt=$'Turn this workspace into a task…\tname this workspace · windows stay here' can_adopt=false
+  local go=$'Go to a task…\tswitch tasks · leaves this window here'
+  local move=$'Move to another workspace…\tpick a plain workspace · moves this window'
   local -a rows=()
   local -A task_rows=() plain_rows=()
   [[ $cls != google-chrome ]] || first+=' · whole window (all tabs)'
+  first+=' · moves this window'
   rows+=("$(printf '󰐗\t%s' "$first")")
-  build_task_rows "$source"
-  [[ $tasks == '[]' ]] || rows+=("$(printf '󰉒\t%s' "$go")")
   rows+=("$(printf '󰏫\t%s' "$typed")")
+  build_task_rows "$source" send
+  rows+=("$(printf '󰁌\t%s' "$move")")
+  [[ $tasks == '[]' ]] || rows+=("$(printf '󰉒\t%s' "$go")")
   local source_record
   source_record=$(jq -c --argjson source "$source" 'first(.[] | select(.id == $source)) // empty' <<< "$tasks")
   [[ -z $source_record ]] || rows+=("$(printf '󰏫\t%s' "$rename")")
@@ -289,7 +299,6 @@ send_task() {
     can_adopt=true
     rows+=("$(printf '󰉗\t%s' "$adopt")")
   fi
-  rows+=("$(printf '󰉒\t%s' "$move")")
   if $dry; then selection=$first; else
     selection=$(omarchy-menu-select 'Task' "${rows[@]}" -- --width 600) || return 0
   fi
