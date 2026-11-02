@@ -1,6 +1,6 @@
 # How Taskspaces works
 
-This page describes Taskspaces 0.1.0. The automated tests use mock commands.
+This page describes Taskspaces 0.1.0, requiring Omarchy 4 with a Lua Hyprland config; `.conf` configs are not supported. The automated tests use mock commands.
 
 ## Goals
 
@@ -46,7 +46,7 @@ It launches `uwsm-app -- <browser> --profile-directory=<folder> --new-window abo
 
 | Term | Meaning |
 |---|---|
-| Task | One identity with one native workspace per participating screen (up to two), stored in one record file. Older one-workspace records are read as one-member tasks. |
+| Task | A named workspace stored in one record file; experimental two-screen tasks use a workspace on each screen. |
 | Source | The workspace where a task started. Taskspaces remembers its number and name so it can return windows there safely. |
 | In-place task | A task made from a numbered workspace with **Turn this workspace into a task…**. It keeps its number. |
 
@@ -72,7 +72,7 @@ Icons are Material Design glyphs from the Nerd Font shipped with Omarchy.
 ### Go to task
 
 `taskspaces go` opens **Go to task**, listing every task by name with the same window summaries and most-recently-used order.
-Selecting a task activates its workspace on each recorded connected screen, then returns focus to the initiating screen. With one screen remaining it merges the paired areas; after reconnect it restores the recorded window placements. See [Paired-screen recovery](#paired-screen-recovery).
+Selecting a task focuses its workspace without moving your current window. Experimental two-screen behavior is described in [Two-screen tasks](#two-screen-tasks).
 The send menu's **Go to a task…** row opens this list too, as does `taskspaces send` with no focused window.
 With no tasks, the notification reads `No tasks yet`.
 `go --dry-run` prints the focus plan for the first task without opening menus, writing state or a lock, or dispatching commands.
@@ -93,7 +93,6 @@ The suggested name comes from the window title.
 
 - **Start task:** the notification reads `Started task "<task name>"`. The window moves to the lowest unused workspace number. That workspace is renamed to the task. The record stores the starting workspace's number and name. For a scratchpad or other special workspace, it records the fallback return workspace instead.
 - **Existing task:** the window moves to that task's workspace; the notification reads `Sent to "<task name>"`.
-- **Plain workspace:** the window moves; the notification reads `Moved to "<window summary>"`. No record is written.
 - **No focused window:** the Go-to list opens; no window moves.
 
 ## Finish
@@ -117,25 +116,27 @@ In the existing single-workspace flow, the Keep destination must still exist, ha
 
 With no windows, the task finishes without opening a menu and focus goes to that same safe return workspace. For a task made from a numbered workspace, its number becomes its name again and focus stays there.
 
-## Paired-screen recovery
+## Forget a stuck task
 
-Two-screen tasks are experimental and off by default; new tasks use only one workspace even with two screens connected. To opt in, enable **Experimental two-screen tasks** in the Taskspaces widget settings. This stores `"experimentalTwoScreenTasks": true` in the `tithi-stack.taskspaces` bar entry in `${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json`. Turning it off affects new tasks only; existing two-screen tasks still support Go, Send and Finish.
+If Go or Finish reports that a task is stuck, its error menu offers **Forget this task** or **Cancel**.
+Forget releases the task's temporary workspace rules, restores its live workspace names to their numbers, and deletes its record.
+It never focuses, closes or moves a window or workspace.
+Run `taskspaces forget` on a task workspace, or `taskspaces forget --task-id ID` using its primary workspace number, even if its name or screen has changed.
+`forget --dry-run` prints the cleanup without changing names, rules or records.
+If cleanup fails, the record stays available to retry; workspace numbers shared with another recorded task keep that task's name and rules.
 
-With the experimental setting on, Start with two connected screens creates a primary area on the selected window's output and an empty companion on the other output. Naming an empty numbered workspace adopts only that workspace and creates the empty companion. Native names are readable and distinct: the shared task name on the first area and the name plus a trailing `·` on the second. More trailing markers avoid collisions with other workspace or task names. The current widget maps both to the shared name; an older running widget that displays raw workspace names still shows readable text. Go upgrades generated names from the earlier paired build, retaining authorized old names in the record during partial renames. A renamed paired task updates both its metadata and its readable native names. Starting with one screen and old records retain the existing single-workspace behavior. Expanding existing tasks, remapping a task to different docking connectors, and third-monitor policy are follow-ups.
+## Two-screen tasks
 
-Go validates all recorded IDs against live names and other task ownership before dispatch. Persistence rules include the requested output before they can create an empty area. Existing task-owned handles are updated with that binding and the readable default name; configured numbered rules remain untouched. Missing members remain reserved and are restored. With two screens, it places each workspace on its recorded output, activates both, and restores the initiating screen's task focus. The exact-version audit confirmed that an unbound persistent rule can snap a moved workspace back to the focused screen on the next property refresh. The rule now includes the requested monitor and immediately calls `hl.exec_scheduled_prop_refresh_immediately()` before verification. If placement still needs repair, `hl.dsp.workspace.move({ workspace = ..., monitor = ... })` targets only the owned ID; Go verifies ownership, focuses each screen then its workspace, and restores the initiating screen. Silent Start never uses this visible repair. The sequence is not atomic; partial failures retain the record, and a later Go retries. Fullscreen/special overlays and pointer movement need live qualification.
-
-The runtime persistence bridge uses Hyprland 0.56's `hyprctl eval`, `hl.workspace_rule`, `persistent` and `default_name`. Handles live in `_G.__taskspaces_rules`; enabling/disabling a handle schedules the compositor's rule refresh, which the helper flushes immediately. Existing owned rules are re-registered to update their binding and default name. A configured numeric rule without an owned handle is preserved. Config reload can expire the handles; Go re-registers absent rules. If rule creation does not produce the member, Go recreates it by focusing its reserved number and restoring its name. A silent Start cannot use this visible fallback and reports a recoverable error. No `~/.config/hypr` file is edited. Finish disables and forgets all owned member handles. Task refresh also scans the owned handle table and disables handles whose task no longer exists. A generated default from a dead record is released even when its workspace ID now belongs to another live task; that task's readable name is restored before Go proceeds. Every window is preserved. A different live task's name remains a conflict, and a missing member of a valid recorded task remains reserved rather than being pruned. A freshly created owned workspace may have its ordinary numbered name until rename completes; this transitional state is accepted. Finish and prune never disable an unrelated configured rule without an owned handle; removing the plugin alone does not disable session rules, so finish paired tasks before uninstalling.
-
-On explicit Go with only one screen, the member matching that connector becomes visible (primary fallback when neither matches). Each window from the other member gets a durable-in-session recovery entry before moving silently onto the visible member. Its address, PID, initial app identity and stable ID where available are checked before and after movement. A partial or acknowledged-but-ineffective move keeps recovery data and the task. Nothing runs automatically on unplug.
-
-On Go with both recorded outputs back, both workspaces are restored first. Recorded merged windows return to their original members; successful entries are cleared individually. Closed windows are forgotten. Windows moved outside the task by the user are not fetched back, and a reused address with a different identity is skipped while the remaining windows restore. Windows newly opened while merged stay on their current member. Silent send never merges or splits windows. Normal send prepares and activates the destination with Go before moving the captured window, then verifies that the target is visible. Preparation failure leaves that window at its source. Silent send retains its single address-targeted move and leaves both visible workspaces unchanged.
-
-Finish resolves either member and reviews the union once. Keep returns each reviewed window to its own member's validated source on its connected output, using its original member for merged windows. If that source is missing, renamed, task-owned or now on another screen, it uses an empty ordinary area on the member's available output or creates a fresh one there. It never sends external-screen windows to the laptop's workspace 1 merely because that number is the global fallback. Adopted members keep reviewed windows in place and regain numbered names. All task members, including absent ones, are excluded from other tasks' safe return destinations. Close never kills or answers save prompts. New windows, refused closes and partial dispatch failures preserve the task and recovery state.
+Tasks use one workspace by default, even with two screens connected, and two-screen tasks are experimental.
+To opt in, enable **Experimental two-screen tasks** in the Taskspaces widget settings; this sets `"experimentalTwoScreenTasks": true` in its `tithi-stack.taskspaces` bar entry in `${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json`.
+New tasks then use a workspace on each screen, with an empty second workspace and one shared name in menus and both bars; existing one-screen tasks stay on one screen.
+Go and normal Send switch both screens, silent Send leaves visible workspaces unchanged, and Finish reviews windows from both screens before closing them or returning them to their starting workspaces.
+Choosing Go after unplugging a screen combines task windows on the remaining screen and choosing it after reconnecting restores the moved windows; changed connectors or a third screen can leave the task stuck, where Forget leaves its windows in place.
+Turning the setting off affects creation only, so Go, Send, Finish and Forget still work on existing two-screen tasks; temporary rules use `hyprctl eval` without editing config files, and a config reload clears those rules and can remove empty task workspaces until Go restores them.
 
 ## Workspace numbers
 
-- Single-screen creation retains the existing lowest-unused-live-workspace rule. Paired creation takes the lowest positive ID not occupied by any client, recorded live task member, active monitor view, enabled numeric workspace rule, or custom/persistent workspace reservation. Empty inactive ordinary numbered areas can be reused. Its companion takes the next eligible ID. Owned rules from dead records are disabled before allocation; surviving windows and live logical tasks still reserve their numbers. Task 1 on IDs 1/3 plus a plain window on ID 2 therefore leaves 4/5 as the next pair.
+- New tasks take the lowest unused workspace number. Experimental two-screen tasks need two numbers and also skip numbers reserved by workspace rules.
 - While the task exists, pressing `SUPER + 3` goes to the task, because the task is workspace 3. This follows from the number rule. It is not tested on a live desktop.
 - Send and finish do not rebind keys. They only rename the workspace number a task takes; setup adds shortcuts separately with consent.
 - When an in-place task finishes, its number becomes its name again.
@@ -151,7 +152,7 @@ Finish resolves either member and reviews the union once. Keep returns each revi
 
 ## Bar widget
 
-The widget shows its task icon followed by the task name when the active workspace is a task. Otherwise it shows the active window's title. It reads the workspace name and active window title and reads task records through the read-only `bin/taskspaces-members` helper on startup and debounced workspace/focus/rename/create/destroy/move events. A 30-second fallback refresh covers a lost event or a metadata-only edit. There is no one-second Python loop; each pair of idle bars performs four fallback queries per minute. A separate published index was not added because legacy shell flows also write task records; direct record reads keep one authoritative mapping. Each widget uses its own monitor's active workspace ID and checks its live name before showing the common task name. Native number-key changes therefore show the actual task on that screen. Native member names are readable even in a stale widget; the current widget always prefers the common task label.
+The widget shows its task icon followed by the task name when the active workspace is a task. Otherwise it shows the active window's title. It reads the workspace name and active window title and reads task records through the read-only `bin/taskspaces-members` helper on startup and debounced workspace/focus/rename/create/destroy/move events. A 30-second fallback refresh covers a lost event or a metadata-only edit. Each widget uses its own monitor's active workspace ID and checks its live name before showing the common task name. Native number-key changes therefore show the actual task on that screen. Both bars show the common name for an experimental two-screen task.
 
 A left click on either label launches your own Go-to-task list via `bin/taskspaces go`, resolved relative to the plugin. The bar host receives the click and calls the widget’s root `triggerPress(button)` hook; the inner MouseArea handles only hover. The hook ignores buttons other than the left button and uses Omarchy’s `Util.execArgv` helper to launch the command detached with the login-shell environment, passing the path as a literal argument. The widget itself never focuses, moves or closes a window; focusing happens only when you pick a row. Right and middle clicks are not handled. Hover shows the full task name and workspace number, or window title, plus a **click for tasks** hint; the cursor is a pointing hand. With no tasks, the existing command reports `No tasks yet`.
 

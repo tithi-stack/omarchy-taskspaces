@@ -21,23 +21,16 @@ On a numbered workspace, **Turn this workspace into a task…** names it without
 
 ## Two screens, one task
 
-Two-screen tasks are experimental and off by default; new tasks use only one workspace even with two screens connected. To opt in, enable **Experimental two-screen tasks** in the Taskspaces widget settings. This stores `"experimentalTwoScreenTasks": true` in the `tithi-stack.taskspaces` bar entry in `${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json`. Turning it off affects new tasks only; existing two-screen tasks still support Go, Send and Finish.
-
-With the experimental setting on, new tasks use both connected screens. Your chosen window stays on its starting screen, and the other screen starts empty. Each screen has its own native workspace, but both current bars show the same task name. Native workspace names are readable too: the task name, then the task name with a trailing `·` for the second screen (more markers only to avoid an existing name). A bar still running the old widget can safely display those names. Menus list the task once. One-screen machines keep the existing single-workspace flow; older tasks stay on one screen.
-
-**Go to task** switches both screens together and returns focus to the initiating screen. Send prepares and shows the destination before moving your chosen window to the task area matching its screen; silent send leaves both visible workspaces unchanged. Finish works from either screen, reviews the combined windows once, and returns kept windows to each area's safe starting workspace. For paired tasks, windows appearing after confirmation are left alone and keep the task unfinished. If a saved return workspace is unavailable, Keep chooses or creates an ordinary workspace on that area's connected screen.
-
-After unplugging a screen, choose the task with **Go to task** to combine its windows on the remaining screen. After reconnecting, choose it again to return the moved windows to their original screens. Only these explicit task selections (including send-and-follow) reconcile the layout; there is no hot-plug listener. Windows opened while combined stay on that area; windows you move outside the task are left there.
-
-Go also repairs an area created on the wrong screen by a previous build and upgrades generated names to readable names. Empty areas remain reserved in the task record and are recreated on Go. On Hyprland 0.56, task-owned runtime persistence rules bind them to the requested output and keep them alive where no existing numbered rule would be replaced. If an existing area needs repair, Go binds and immediately refreshes its rule before checking placement, uses a targeted workspace move only for repair, then focuses each screen and its task area. No Hyprland config file is edited. Finish releases only these task-owned rules. Task refresh also releases owned orphan rules when their record is gone and repairs a reused area still carrying a dead task's generated name, preserving its windows. Selecting a native numbered workspace changes only that screen, and its bar shows the task actually present there. Debounced compositor events refresh labels promptly; a 30-second fallback catches lost events or manual metadata edits.
-
-Paired creation uses the lowest slots free of windows, live task members, active views, enabled numbered rules and custom/persistent workspace reservations. Empty inactive ordinary numbered areas can be reused. A dead task's disabled rule reserves nothing, but a surviving window or another live task still protects its number. For example, when task areas occupy 1 and 3 and a plain window occupies 2, the next pair uses 4 and 5. Existing single-screen allocation is unchanged.
-
-Follow-up: expanding an existing one-screen task, changing a task's connector assignments, and third-screen policy are not included.
+Tasks use one workspace by default, even with two screens connected.
+Two-screen tasks are experimental: enable **Experimental two-screen tasks** in the Taskspaces widget settings, which sets `"experimentalTwoScreenTasks": true` in its `tithi-stack.taskspaces` bar entry in `${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json`.
+New tasks then use one workspace per screen, with the other screen starting empty and both bars showing the same task name.
+Go and normal Send switch both screens, silent Send leaves the visible workspaces unchanged, and Finish reviews the combined windows.
+After unplugging a screen, choosing Go combines the task's windows on the remaining screen; choosing it again after reconnecting restores the moved windows, though a different connector or a third screen can leave the task stuck.
+Turning the setting off affects new tasks only: existing two-screen tasks still support Go, Send and Finish, and **Forget this task** drops a stuck task without moving its windows.
 
 ## Status and requirements
 
-**Alpha (0.1.0) for Omarchy 4.** The original single-screen flow was tried on Omarchy 4.0.4 with Hyprland 0.56.2. Paired-screen switching, missing empty workspaces and unplug/replug recovery have mock coverage. Two-focus switching, runtime persistence across a real unplug/replug, both live bar labels, special overlays and app save prompts still need a controlled desktop trial. The browser helper supports Chromium-family browsers only.
+**Alpha (0.1.0), requiring Omarchy 4 with a Lua Hyprland config; `.conf` configs are not supported.** The single-screen flow was tried on Omarchy 4.0.4 with Hyprland 0.56.2. Experimental two-screen behavior has mock coverage and still needs a real desktop trial, including unplug/replug, both bar labels and fullscreen windows. App save prompts also need a desktop trial. The browser helper supports Chromium-family browsers only.
 See [Status](#status) for runtime tools and limits.
 
 ## Install
@@ -52,11 +45,11 @@ Repository: `omarchy-taskspaces`; plugin id: `tithi-stack.taskspaces`; command: 
    ```bash
    "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/tithi-stack.taskspaces/bin/taskspaces" setup
    ```
-   Setup offers send, silent send and finish, plus optional **Go to task**. For a supported browser, it also offers **new browser window here**. It backs up your bindings first, checks the reload, and restores the backup if verification fails. It reports the keys you chose. **Show me the lines first** previews the exact block; **No, I'll add them myself** leaves your file alone.
+   Setup offers two keys: `Super+N` for the task menu and `Super+D` for finish. It backs up your bindings first, checks the reload, and restores the backup if verification fails. It reports the keys you chose. **Show me the lines first** previews the exact block; **No, I'll add them myself** leaves your file alone.
 
 The plugin never touches your Hyprland files unless you run `taskspaces setup` and choose Yes. Installing or enabling it does not run setup.
 
-If a shortcut is already taken, setup names what uses it and offers a free alternative when one is available. You can also pick your own key or skip that shortcut. Silent send starts with your chosen send key plus Alt; if that is taken, you can choose another. Existing shortcuts are never replaced.
+If a shortcut is already taken, setup names what uses it and offers a free alternative when one is available. You can also pick your own key or skip that shortcut. Existing shortcuts are never replaced.
 
 Updates: `omarchy plugin update tithi-stack.taskspaces`. The bindings point at the helper inside the plugin folder, so you do not change them after an update.
 
@@ -164,7 +157,7 @@ For a direct key, paste the optional `Super+Alt+B` binding above after checking 
 
 ## Uninstall
 
-1. Finish paired tasks first to release their runtime persistence rules, then remove setup's shortcuts before deleting the plugin:
+1. Finish or Forget any two-screen tasks first to release their temporary workspace rules, then remove setup's shortcuts before deleting the plugin:
    ```bash
    "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/tithi-stack.taskspaces/bin/taskspaces" setup --remove
    ```
@@ -185,7 +178,7 @@ Disabling the plugin hides the bar label only. The shortcuts keep working until 
 
 ## Troubleshooting
 
-- **A task is stuck.** Press `Super+D` on it and choose **Forget this task**, or run `taskspaces forget --task-id ID` with its primary workspace number. Forget removes the task name and rules and leaves every window where it is.
+- **A task is stuck.** Press `Super+D` on it and choose **Forget this task**, or run `taskspaces forget --task-id ID` with its primary workspace number. Forget removes the task record and rules, restores numbered workspace names, and leaves every window where it is. `taskspaces forget` forgets the task on the current workspace.
 
 - **The key does nothing.** Cause: another Taskspaces action holds the lock, and the helper exits silently when it cannot get it. Or the bind did not load. Fix: wait a second and press again. If it still does nothing, run `hyprctl configerrors`.
 - **Notification: "No tasks yet".** Cause: the Go-to list has no tasks to show. Fix: focus a window and use the send key to start a task.
@@ -197,17 +190,17 @@ Disabling the plugin hides the bar label only. The shortcuts keep working until 
 
 ## FAQ
 
-- **Does it change my Hyprland config?** Only when you run setup and choose Yes. It edits only your Lua bindings file, backs it up outside your config folder, and can undo its managed block with `taskspaces setup --remove`.
+- **Does it change my Hyprland config?** Setup edits your Lua bindings file only after you choose Yes, with a backup and `setup --remove` to undo its block. Experimental two-screen tasks, off by default, also use `hyprctl eval` to add temporary rules to the running compositor without editing a config file. A config reload, such as a theme change, clears those rules; empty task workspaces can disappear until Go restores them.
 - **Does it use the network or sudo?** No. It runs only local commands. See [SECURITY.md](SECURITY.md).
 - **Can I keep using numbered workspaces?** Yes. A task takes the lowest unused number while it exists. See [Workspace numbers](docs/how-it-works.md#workspace-numbers).
-- **Does it work with a legacy `.conf` Hyprland config?** See [Status](#status) for compatibility; the setup instructions use Lua.
+- **Does it work with a `.conf` Hyprland config?** No. Omarchy 4 with a Lua Hyprland config is required; task actions use Lua dispatchers.
 - **Is it in a plugin marketplace?** Not yet.
 
 ## Status
 
 See [Status and requirements](#status-and-requirements) for release status and untested desktop behavior.
 
-Legacy `.conf` support is unverified. A task takes a workspace number. Finish can close windows; it never force-kills processes or answers save prompts. Focus returns to the safe return workspace described in [Usage](#usage).
+Omarchy 4 with a Lua Hyprland config is required; `.conf` configs are not supported. A task takes a workspace number. Finish can close windows; it never force-kills processes or answers save prompts. Focus returns to the safe return workspace described in [Usage](#usage).
 
 | Requirement | Used for |
 |---|---|
@@ -217,7 +210,7 @@ Legacy `.conf` support is unverified. A task takes a workspace number. Finish ca
 | `omarchy-notification-send` (preferred) or `notify-send` (fallback) | Notifications. Without either, messages go to stderr. |
 
 Check your Omarchy version with `omarchy version`. The targeted release supplies the plugin system and Lua bindings.
-Send, go and finish also need `XDG_RUNTIME_DIR` set; setup and browser do not. See [Troubleshooting](#troubleshooting).
+Send, Go, Finish and Forget also need `XDG_RUNTIME_DIR` set; setup and browser do not. See [Troubleshooting](#troubleshooting).
 
 ## More
 
