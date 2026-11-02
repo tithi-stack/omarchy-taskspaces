@@ -37,7 +37,7 @@ GitHub Actions runs the tests, ShellCheck on `bin/taskspaces`, and a dry-run che
 1. Fork the repository, then create a branch from `main`.
 2. Write a failing test for the behavior you want, then make it pass.
 3. Keep one logical change per commit.
-4. If the change is visible to users, add a line under `## [Unreleased]` in `CHANGELOG.md`.
+4. If the change is visible to users, add a line under `## [0.1.0] - Unreleased` in `CHANGELOG.md`.
 5. Open a pull request. Describe what changed, why, and how you tested it. The pull request template has a checklist.
 
 ## Commit messages
