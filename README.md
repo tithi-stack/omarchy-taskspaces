@@ -185,6 +185,8 @@ Disabling the plugin hides the bar label only. The shortcuts keep working until 
 
 ## Troubleshooting
 
+- **A task is stuck.** Press `Super+D` on it and choose **Forget this task**, or run `taskspaces forget --task-id ID` with its primary workspace number. Forget removes the task name and rules and leaves every window where it is.
+
 - **The key does nothing.** Cause: another Taskspaces action holds the lock, and the helper exits silently when it cannot get it. Or the bind did not load. Fix: wait a second and press again. If it still does nothing, run `hyprctl configerrors`.
 - **Notification: "No tasks yet".** Cause: the Go-to list has no tasks to show. Fix: focus a window and use the send key to start a task.
 - **Notification: "This workspace isn't a task".** Cause: your finish key ran on a plain workspace. Fix: switch to the task workspace, then press your finish key (`Super+D` by default).

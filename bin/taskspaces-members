@@ -19,6 +19,12 @@ class TaskError(Exception):
     pass
 
 
+class StuckTaskError(TaskError):
+    def __str__(self):
+        return (super().__str__() + '. This task is stuck. Press Super+D to forget it; '
+                'your windows stay where they are.')
+
+
 def lua(value):
     # JSON strings are Lua-compatible for these strings, except JSON's \u form.
     # Hide routing substrings from hyprctl; three digits also protect a/5.
@@ -135,10 +141,10 @@ class Pair:
         for ws in workspaces:
             if ws['id'] in owned and ws['name'] not in (
                     owned[ws['id']]['name'], str(ws['id']), record.get('pending_names', {}).get(str(ws['id']))):
-                raise TaskError('Workspace ' + str(ws['id']) + ' changed name; task retained for inspection')
+                raise StuckTaskError('Workspace ' + str(ws['id']) + ' changed name')
         for other in records(self.folder, workspaces):
             if other['id'] != record['id'] and owned.keys() & {m['id'] for m in other['members']}:
-                raise TaskError('Task workspace ownership conflicts; tasks retained')
+                raise StuckTaskError('Task workspace ownership conflicts')
         return workspaces
 
     def reconcile(self, tasks, workspaces):
@@ -170,7 +176,7 @@ class Pair:
             self.command('eval', code)
             for rule in self.read('workspacerules'):
                 if rule.get('workspaceString', '').isdigit() and int(rule['workspaceString']) in stale and rule.get('enabled') is not False:
-                    raise TaskError('Orphan task rule has no releasable owned handle; task retained for inspection')
+                    raise StuckTaskError('Orphan task rule has no releasable owned handle')
         repaired = set()
         for ws in workspaces:
             old = re.fullmatch(r'taskspaces-(\d+)-[12]', ws['name'])
@@ -244,7 +250,7 @@ class Pair:
             for member in record['members']:
                 ws = next((w for w in live if w['id'] == member['id']), None)
                 if ws is not None and ws['name'] != member['name']:
-                    raise TaskError('Task name update could not be verified; task retained')
+                    raise StuckTaskError('Task name update could not be verified')
                 record.get('pending_names', {}).pop(str(member['id']), None)
         self.write(record)
 
@@ -306,14 +312,14 @@ class Pair:
         if not self.dry:
             live = self.snapshot(record)
             if not any(w['id'] == member['id'] and w['name'] == member['name'] and w.get('monitor') == output for w in live):
-                raise TaskError('Workspace did not reach its recorded screen; task retained')
+                raise StuckTaskError('Workspace did not reach its recorded screen')
             record.get('pending_names', {}).pop(str(member['id']), None)
             self.write(record)
 
     def window(self, captured):
         addr = captured.get('address', '')
         if not re.fullmatch(r'0x[0-9a-fA-F]+', addr):
-            raise TaskError('Invalid window address; task retained')
+            raise StuckTaskError('Invalid window address')
         return next((w for w in self.read('clients') if w['address'] == addr and w.get('mapped') is not False), None)
 
     @staticmethod
@@ -326,12 +332,12 @@ class Pair:
         if before is None:
             return False
         if not self.same_window(captured, before) or before['workspace']['id'] != captured['workspace']['id']:
-            raise TaskError('Window changed before move; task retained')
+            raise StuckTaskError('Window changed before move')
         self.command('dispatch', 'hl.dsp.window.move({ window = ' + lua('address:' + before['address']) + ', workspace = ' + lua(target) + ', follow = false })', before['address'])
         if not self.dry:
             after = self.window(before)
             if after is not None and (not self.same_window(before, after) or after['workspace']['id'] != target):
-                raise TaskError('Window move could not be verified; recovery record retained')
+                raise StuckTaskError('Window move could not be verified')
         return True
 
     @staticmethod
@@ -345,7 +351,7 @@ class Pair:
         workspaces = self.snapshot(record)
         monitors = self.outputs()
         if not monitors or len(monitors) > 2:
-            raise TaskError('Task switching supports one or two connected screens')
+            raise StuckTaskError('Task switching supports one or two connected screens')
         focus = preferred or next((m['name'] for m in monitors if m.get('focused')), monitors[0]['name'])
         if len(monitors) == 1:
             visible = next((m for m in record['members'] if m['output'] == monitors[0]['name']), record['members'][0])
@@ -367,7 +373,7 @@ class Pair:
         else:
             outputs = {m['name'] for m in monitors}
             if any(m['output'] not in outputs for m in record['members']):
-                raise TaskError('Recorded screen is unavailable; task retained')
+                raise StuckTaskError('Recorded screen is unavailable')
             for member in record['members']:
                 self.ensure(record, member, member['output'])
             for entry in list(record.get('merged_windows', [])):
@@ -441,7 +447,7 @@ class Pair:
             if follow:
                 self.focus(wid)
                 if not self.dry and self.read('activeworkspace')['id'] != wid:
-                    raise TaskError('Started window could not be shown; task retained')
+                    raise StuckTaskError('Started window could not be shown')
 
     def send(self, record, captured, follow):
         monitors = self.outputs()
@@ -467,12 +473,41 @@ class Pair:
         if follow:
             self.focus(target['id'])
             if not self.dry and self.read('activeworkspace')['id'] != target['id']:
-                raise TaskError('Sent window could not be shown; task retained')
+                raise StuckTaskError('Sent window could not be shown')
 
     def task_windows(self, record):
         self.snapshot(record)
         ids = {m['id'] for m in record['members']}
         return [w for w in self.read('clients') if w.get('mapped') is not False and w['workspace']['id'] in ids]
+
+    def forget(self, record):
+        # Deliberately bypass snapshot/name/monitor checks: this is the escape
+        # from those checks. Never focus, move or close a window or workspace.
+        workspaces = self.read('workspaces')
+        shared = {m['id'] for other in records(self.folder, workspaces)
+                  if other['id'] != record['id'] for m in other['members']}
+        for member in record['members']:
+            if member['id'] in shared:
+                continue  # Another recorded task still needs this name/rule.
+            self.rule(member, release=True)
+            if any(w['id'] == member['id'] for w in self.read('workspaces')):
+                self.rename(member, str(member['id']))
+        if not self.dry:
+            (self.folder / (str(record['id']) + '.json')).unlink()
+        print('Forgot task: ' + record['name'] + '. Your windows stay where they are.')
+
+    def offer_forget(self, record, error):
+        report_error(error)
+        if self.dry:
+            return False
+        result = subprocess.run(['omarchy-menu-select', 'This task is stuck',
+                                 '󰁍\tCancel',
+                                 '󰁍\tForget this task\tyour windows stay where they are',
+                                 '--', '--width', '600'], capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout.strip().split('\t')[0] == 'Forget this task':
+            self.forget(record)
+            return True
+        return False
 
     def destination(self, member, record):
         workspaces = self.read('workspaces')
@@ -502,7 +537,7 @@ class Pair:
         self.focus(output=output)
         self.focus(target)
         if not self.dry and not any(w['id'] == target and w.get('monitor') == output for w in self.read('workspaces')):
-            raise TaskError('Return workspace did not reach its screen; task retained')
+            raise StuckTaskError('Return workspace did not reach its screen')
         return target
 
     def finish(self, record):
@@ -541,7 +576,7 @@ class Pair:
                 if not win or win['workspace']['id'] not in {m['id'] for m in record['members']}:
                     continue
                 if not self.same_window(captured, win):
-                    raise TaskError('Window identity changed; task retained')
+                    raise StuckTaskError('Window identity changed')
                 if keep:
                     original = next((r['member'] for r in record.get('merged_windows', [])
                                      if r['address'] == win['address'] and self.same_window(r['window'], win)), win['workspace']['id'])
@@ -563,14 +598,14 @@ class Pair:
                     extra = any(w['workspace']['id'] in {m['id'] for m in record['members']}
                                 and not any(self.same_window(c, w) for c in wins) for w in live)
                     if now - start >= 30 or (now - changed >= 10 and not extra):
-                        raise TaskError('Not finished: reviewed windows still open; task retained')
+                        raise StuckTaskError('Not finished: reviewed windows still open')
                     time.sleep(0.25)
         if not self.dry:
             remaining = self.task_windows(record)
             # Adopted members legitimately keep their reviewed windows in place.
             if remaining and not (keep and all(any(self.same_window(c, w) for c in wins) and any(
                     m['source'] == m['id'] == w['workspace']['id'] for m in record['members']) for w in remaining)):
-                raise TaskError('Not finished: new or remaining windows; task retained')
+                raise StuckTaskError('Not finished: new or remaining windows')
         primary_dest = self.destination(record['members'][0], record)
         for member in record['members']:
             record.setdefault('pending_names', {})[str(member['id'])] = str(member['id'])
@@ -592,8 +627,32 @@ def main():
     elif action == 'records':
         workspaces = json.loads(args[0])
         tasks = records(pair.folder, workspaces, pair.dry)
-        pair.reconcile(tasks, workspaces)
+        defer_reconcile = args[1:] == ['without-reconcile'] and any(len(t['members']) > 1 for t in tasks)
+        if not defer_reconcile:
+            pair.reconcile(tasks, workspaces)
         print(json.dumps(records(pair.folder, pair.read('workspaces'), True)))
+    elif action == 'forget':
+        requested = int(args[0]) if args and args[0] else pair.read('activeworkspace')['id']
+        workspaces = pair.read('workspaces')
+        # Read raw records so a changed name cannot prune away the task before
+        # Forget sees it. Validate all fields used to construct compositor code.
+        record = None
+        for file in pair.folder.glob('*.json'):
+            try:
+                item = json.loads(file.read_text())
+                if not (positive(item['id']) and positive(item['source']) and isinstance(item['name'], str)
+                        and file.name == str(item['id']) + '.json'):
+                    continue
+                item['members'] = members(item, workspaces)
+                if (args and args[0] and item['id'] == requested) or (
+                        not (args and args[0]) and any(m['id'] == requested for m in item['members'])):
+                    record = item
+                    break
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+        if record is None:
+            raise TaskError('No task found here; use taskspaces forget --task-id ID for a task on another workspace')
+        pair.forget(record)
     elif action == 'labels':
         result = {}
         workspaces = pair.read('workspaces')
@@ -615,12 +674,21 @@ def main():
             if fresh['members'] != record['members'] or fresh['name'] != record['name']:
                 raise TaskError('Task changed while the menu was open; try again')
             record = fresh
-        if action == 'go':
-            pair.go(record)
+        if action in ('go', 'finish'):
+            try:
+                pair.reconcile(records(pair.folder, pair.read('workspaces')), pair.read('workspaces'))
+                if not pair.dry:
+                    record = json.loads((pair.folder / (str(record['id']) + '.json')).read_text())
+                    record['members'] = members(record, pair.read('workspaces'))
+                if action == 'go':
+                    pair.go(record)
+                else:
+                    pair.finish(record)
+            except StuckTaskError as error:
+                if not pair.offer_forget(record, error):
+                    sys.exit(1)
         elif action == 'send':
             pair.send(record, json.loads(args[1]), args[2] == 'true')
-        elif action == 'finish':
-            pair.finish(record)
         elif action == 'rename':
             pair.snapshot(record)
             record['name'] = args[1]
@@ -628,14 +696,18 @@ def main():
             pair.write(record)
 
 
+def report_error(error):
+    text = ' '.join(str(error).split())
+    print('taskspaces: ' + text, file=sys.stderr)
+    if sys.argv[1] != 'true':
+        tool = shutil.which('omarchy-notification-send') or shutil.which('notify-send')
+        if tool:
+            subprocess.run([tool, 'taskspaces', text], capture_output=True, check=False)
+
+
 if __name__ == '__main__':
     try:
         main()
     except (TaskError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
-        text = ' '.join(str(error).split())
-        print('taskspaces: ' + text, file=sys.stderr)
-        if sys.argv[1] != 'true':
-            tool = shutil.which('omarchy-notification-send') or shutil.which('notify-send')
-            if tool:
-                subprocess.run([tool, 'taskspaces', text], capture_output=True, check=False)
+        report_error(error)
         sys.exit(1)

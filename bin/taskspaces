@@ -139,7 +139,7 @@ paired_available() {
   [[ $(hyprctl monitors -j | jq '[.[] | select(.disabled != true and (.mirrorOf == null or .mirrorOf == "none"))] | length') == 2 ]]
 }
 prune() {
-  tasks=$(member_tool records "$workspaces")
+  tasks=$(member_tool records "$workspaces" "$@")
   workspaces=$(hyprctl workspaces -j)
 }
 
@@ -274,7 +274,7 @@ go_task() {
   local -a rows=()
   local -A task_rows=()
   workspaces=$(hyprctl workspaces -j)
-  prune
+  prune without-reconcile
   if [[ $tasks == '[]' ]]; then notify 'No tasks yet'; return; fi
   build_task_rows
   if $dry; then selection=${rows[0]#*$'\t'}; else
@@ -537,7 +537,7 @@ finish_task() {
   workspace=$(hyprctl activeworkspace -j)
   id=$(jq -er '.id | select(type == "number")' <<< "$workspace")
   workspaces=$(hyprctl workspaces -j)
-  prune
+  prune without-reconcile
   record=$(jq -c --argjson id "$id" 'first(.[] | select(any(.members[]; .id == $id))) // empty' <<< "$tasks")
   if [[ -z $record ]]; then notify "This workspace isn't a task"; return; fi
   if jq -e '.members | length > 1' <<< "$record" >/dev/null; then
@@ -601,6 +601,9 @@ finish_task() {
     done
     notify "Not finished: $(jq -r '[.[0:3][] | "\"" + ((.title // .class) | gsub("[\\r\\n\\t]"; " ")) + "\""] | join(", ")' <<< "$remaining") still open"
   fi
+}
+forget_task() {
+  member_tool forget "$requested_task_id"
 }
 # Setup and browser windows need no task state, runtime directory or jq.
 desktop_task() {
@@ -1219,6 +1222,7 @@ usage() {
     'Usage: taskspaces send [--silent] [--address 0x…] [--dry-run]' \
     '       taskspaces finish [--dry-run]' \
     '       taskspaces go [--dry-run]' \
+    '       taskspaces forget [--task-id ID] [--dry-run]' \
     '       taskspaces browser' \
     '       taskspaces setup [--remove | --dry-run]' \
     '       taskspaces --help | --version'
@@ -1232,6 +1236,8 @@ show_help() {
     'send --address   Act on the window at this address instead of the focused one.' \
     'go               Go to a task by name without moving a window.' \
     'finish           Close or return the windows of the current task.' \
+    'forget           Drop the task name and rules; leave every window where it is.' \
+    'forget --task-id  Forget a task by its primary workspace number.' \
     'browser          Open a new browser window in the current workspace.' \
     'setup            Offer shortcuts and ask before changing your bindings.' \
     'setup --remove   Back up and remove only shortcuts added by setup.' \
@@ -1240,7 +1246,7 @@ show_help() {
     '--version        Print the version.'
 }
 main() {
-  local command='' requested_address='' dry=false follow=true workspaces tasks state_dir
+  local command='' requested_address='' requested_task_id='' dry=false follow=true workspaces tasks state_dir
   if [[ ${1:-} == browser ]]; then
     (( $# == 1 )) || { usage >&2; return 2; }
     desktop_task browser; return $?
@@ -1254,17 +1260,19 @@ main() {
   fi
   while (( $# )); do
     case $1 in
-      send|finish|go) [[ -z $command ]] || return 2; command=$1 ;;
+      send|finish|go|forget) [[ -z $command ]] || return 2; command=$1 ;;
       --dry-run) dry=true ;;
       --silent) follow=false ;;
       --address) shift; requested_address=${1:?--address requires an address}; [[ $requested_address =~ ^0x[0-9a-fA-F]+$ ]] || return 2 ;;
+      --task-id) shift; requested_task_id=${1:?--task-id requires a number}; [[ $requested_task_id =~ ^[1-9][0-9]*$ ]] || return 2 ;;
       --help) show_help; return 0 ;;
       --version) printf '%s\n' "$version"; return 0 ;;
       *) usage >&2; return 2 ;;
     esac
     shift
   done
-  [[ -n $command ]] || { printf 'Expected send, finish or go\n' >&2; return 2; }
+  [[ -n $command ]] || { printf 'Expected send, finish, go or forget\n' >&2; return 2; }
+  [[ -z $requested_task_id || $command == forget ]] || return 2
   require_commands || return 1
   state_dir=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is required}/taskspaces
   # Dry runs create no state, lock file, menus, notifications, or dispatches.

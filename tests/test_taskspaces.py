@@ -180,7 +180,7 @@ if cmd == 'hyprctl':
     else: raise RuntimeError(args)
 elif cmd == 'omarchy-menu-select':
     if cfg.get('select_cancel'): sys.exit(1)
-    cfg.update(cfg.get('menu_updates', {}))
+    cfg.update(cfg.pop('menu_updates', {}))
     for record in cfg.get('menu_records', []):
         (root / 'runtime' / 'taskspaces' / f'{record["id"]}.json').write_text(json.dumps(record))
     save()
@@ -337,6 +337,33 @@ class TaskTests(unittest.TestCase):
         self.assert_no_effect()
         self.assertEqual(self.events('omarchy-menu-select'), [])
         self.assertTrue(any('No tasks yet' in ' '.join(args) for args in self.events('omarchy-notification-send')))
+
+    def test_forget_single_task_leaves_every_window_in_place(self):
+        self.record()
+        self.cfg['workspacerules'] = [{'workspaceString': '2', 'enabled': True,
+                                       'persistent': True, 'defaultName': 'Planning'}]
+        self.cfg['owned_rules'] = {'2': 'Planning'}
+        before = copy.deepcopy(self.cfg['clients'])
+        self.run_task('forget')
+        self.assertEqual(self.cfg['clients'], before)
+        self.assertFalse((self.state / '2.json').exists())
+        self.assertEqual(self.cfg['owned_rules'], {})
+        self.assertFalse(self.cfg['workspacerules'][0]['enabled'])
+        self.assertEqual(next(w['name'] for w in self.cfg['workspaces'] if w['id'] == 2), '2')
+        self.assertTrue(all(c.startswith('hl.dsp.workspace.rename') for c in self.dispatches()))
+
+    def test_forget_by_id_handles_changed_name_and_dry_run(self):
+        self.record()
+        self.cfg['workspaces'][1]['name'] = 'Changed by hand'
+        self.cfg['activeworkspace'] = real_workspace(1, '1')
+        before = copy.deepcopy(self.cfg)
+        self.run_task('forget', '--task-id', '2', '--dry-run')
+        self.assertTrue((self.state / '2.json').exists())
+        self.assertEqual(self.cfg, before)
+        self.assertEqual(self.dispatches(), [])
+        self.run_task('forget', '--task-id', '2')
+        self.assertFalse((self.state / '2.json').exists())
+        self.assertEqual(self.cfg['clients'], before['clients'])
 
     def empty_workspace(self):
         self.cfg['activewindow'] = {}
@@ -1521,6 +1548,48 @@ class MultiMonitorTests(unittest.TestCase):
         self.finish_here(3, 'Keep 2 windows and finish')
         self.assertEqual({w['workspace']['id'] for w in self.cfg['clients']}, {2})
         self.assertFalse((self.state / '3.json').exists())
+
+    def test_forget_pair_releases_rules_without_touching_windows(self):
+        self.start()
+        self.two_screen_setting(False)
+        before = copy.deepcopy(self.cfg['clients'])
+        active = self.active()
+        (self.root / 'events.jsonl').write_text('')
+        self.run_task('forget', '--task-id', '3')
+        self.assertEqual(self.cfg['clients'], before)
+        self.assertEqual(self.active(), active)
+        self.assertFalse((self.state / '3.json').exists())
+        self.assertEqual(self.cfg['owned_rules'], {})
+        self.assertTrue(all(r.get('enabled') is False for r in self.cfg['workspacerules']))
+        self.assertEqual({w['id']: w['name'] for w in self.cfg['workspaces'] if w['id'] in (3, 4)}, {3: '3', 4: '4'})
+        self.assertTrue(all(c.startswith('hl.dsp.workspace.rename') for c in self.dispatches()))
+
+    def test_forget_cleanup_failure_keeps_pair_and_every_window(self):
+        self.start()
+        before = copy.deepcopy(self.cfg['clients'])
+        self.cfg['eval_error'] = True
+        (self.root / 'events.jsonl').write_text('')
+        self.run_task('forget', '--task-id', '3', expected=1)
+        self.assertTrue((self.state / '3.json').exists())
+        self.assertEqual(self.cfg['clients'], before)
+        self.assertEqual(self.dispatches(), [])
+
+    def test_stuck_go_and_finish_offer_forget_or_cancel(self):
+        for action, choice in (('go', 'Cancel'), ('go', 'Forget this task'), ('finish', 'Forget this task')):
+            with self.subTest(action=action, choice=choice):
+                self.screens()
+                record = self.pair()
+                self.cfg['workspaces'][-1]['name'] = 'Changed by hand'
+                self.cfg['activeworkspace'] = copy.deepcopy(self.cfg['workspaces'][-1])
+                self.cfg['select_first'] = False
+                self.cfg['selections'] = (['Planning\tTerminal, Chrome', choice] if action == 'go' else [choice])
+                before = copy.deepcopy(self.cfg['clients'])
+                result = self.run_task(action, expected=1 if choice == 'Cancel' else 0)
+                self.assertIn('Press Super+D to forget it; your windows stay where they are.', result.stderr)
+                self.assertNotIn('retained', result.stderr)
+                self.assertIn('Forget this task', ' '.join(self.menu()))
+                self.assertEqual(self.cfg['clients'], before)
+                self.assertEqual((self.state / '3.json').exists(), choice == 'Cancel')
 
     def start(self, *args):
         self.screens()
