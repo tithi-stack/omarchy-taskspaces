@@ -7,10 +7,13 @@ import qs.Commons as Commons
 import qs.Ui
 
 // Shows the task name of the active workspace, or the active window title.
-// Read-only: this widget never focuses, moves or closes a window.
+// The widget itself never focuses, moves or closes a window. A left click opens
+// the user's Go-to-task list; focusing happens only when the user picks a row.
 BarWidget {
   id: root
   moduleName: "tithi-stack.taskspaces"
+
+  readonly property string taskspacesCommand: decodeURIComponent(String(Qt.resolvedUrl("bin/taskspaces")).replace(/^file:\/\//, ""))
 
   readonly property var monitor: {
     var window = root.QsWindow.window
@@ -72,13 +75,14 @@ BarWidget {
     }
   }
 
-  // Hover only: no mouse buttons are accepted, so the widget never handles a click.
+  // Reuse the CLI list for both task names and window titles.
   MouseArea {
     anchors.fill: parent
     hoverEnabled: true
-    acceptedButtons: Qt.NoButton
-    cursorShape: Qt.ArrowCursor
-    onEntered: if (root.bar) root.bar.showTooltip(root, root.taskActive ? root.taskName + " · workspace " + root.ws.id : root.title)
+    acceptedButtons: Qt.LeftButton
+    cursorShape: Qt.PointingHandCursor
+    onClicked: Util.execArgv([root.taskspacesCommand, "go"])
+    onEntered: if (root.bar) root.bar.showTooltip(root, (root.taskActive ? root.taskName + " · workspace " + root.ws.id : root.title) + " · click for tasks")
     onExited: if (root.bar) root.bar.hideTooltip(root)
   }
 }

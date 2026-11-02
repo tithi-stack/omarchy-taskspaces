@@ -128,7 +128,8 @@ Focus a window and press your send key, then choose **Send to "<task>"** to send
 Task rows show their windows in grey, with the most recently used task first.
 Silent send leaves you where you are; its notification reads `Sent to "Field Job Posting"` when you choose that task.
 
-To return without moving a window, choose **Go to a task…** in the send menu, or run `taskspaces go`.
+To return without moving a window, left-click the bar label (task name or window title), choose **Go to a task…** in the send menu, or run `taskspaces go`.
+The widget itself never focuses, moves or closes a window. A click only launches your own Go-to-task list; focusing happens only when you pick a row. Hover still shows the full label with a **click for tasks** hint.
 Setup offers an optional **Go to task** shortcut, starting with `Super+Alt+T`.
 Choose a task to focus it; the bar shows its name.
 If the Go-to list has no tasks, the notification reads `No tasks yet`.

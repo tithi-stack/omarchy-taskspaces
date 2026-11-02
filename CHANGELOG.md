@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- Left-click the bar label (task name or window title) to launch your own existing Go-to-task list, with a pointing-hand cursor and a **click for tasks** hover hint. The widget itself never focuses, moves or closes a window; focusing happens only when you pick a row.
+
 ### Fixed
 
 - The send key can name an empty numbered workspace or rename an empty task, with navigation when other tasks exist and a warning when leaving it empty would lose its name.

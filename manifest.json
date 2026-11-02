@@ -10,7 +10,7 @@
   "entryPoints": { "barWidget": "TaskLabel.qml" },
   "barWidget": {
     "displayName": "Taskspaces",
-    "description": "Task name on named workspaces, otherwise the active window title",
+    "description": "Task name on named workspaces, otherwise the active window title; left-click for Go to task",
     "category": "Compositor",
     "allowMultiple": false,
     "defaultSection": "center",

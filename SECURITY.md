@@ -19,7 +19,7 @@ Only the latest release receives security fixes.
 - Before editing, setup backs up the original file to `${XDG_STATE_HOME:-$HOME/.local/state}/taskspaces/backups/`. Failed reload or verification restores the backup, unless another program edited the file during verification; then setup leaves those edits intact and gives the backup path for manual recovery. `setup --remove` asks for consent and removes only setup's marked block. Manual bindings are left alone; `setup --dry-run` writes nothing.
 - The optional browser shortcut uses the same consent, conflict checks, backups and verification. Re-running setup can add it to an existing managed block; removing that block also removes its browser line. Omarchy's stock browser shortcut is never replaced.
 - `taskspaces finish` can close windows. An app may ask you to save, and Taskspaces does not answer that prompt.
-- The bar widget only reads the workspace name from Hyprland.
+- The bar widget reads the workspace name and active window title. It itself never focuses, moves or closes a window. A left click only launches your own Go-to-task list (`bin/taskspaces go`, resolved relative to the plugin); focusing happens only when you pick a row. The command is passed as an argument vector without interpreting the plugin path as shell code.
 
 ## Reporting a vulnerability
 

@@ -139,4 +139,6 @@ With no windows, the task finishes without opening a menu and focus goes to that
 
 ## Bar widget
 
-The widget shows its task icon followed by the task name when the active workspace is a task. Otherwise it shows the active window's title. It reads only the workspace name from Hyprland. It shares no files or state with the helper.
+The widget shows its task icon followed by the task name when the active workspace is a task. Otherwise it shows the active window's title. It reads the workspace name and active window title, and shares no files or state with the helper.
+
+A left click on either label launches your own Go-to-task list via `bin/taskspaces go`, resolved relative to the plugin. The widget uses Omarchy’s `Util.execArgv` helper to launch the command detached with the login-shell environment, passing the path as a literal argument. The widget itself never focuses, moves or closes a window; focusing happens only when you pick a row. Right and middle clicks are not handled. Hover shows the full task name and workspace number, or window title, plus a **click for tasks** hint; the cursor is a pointing hand. With no tasks, the existing command reports `No tasks yet`.
