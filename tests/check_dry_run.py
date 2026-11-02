@@ -77,25 +77,30 @@ from test_setup import SetupTests
 case = SetupTests()
 case.setUp()
 try:
-    print('CLI: taskspaces setup --dry-run including browser (mock consent and compositor)')
+    print('CLI: taskspaces setup --dry-run with two keys (mock consent and compositor)')
     case.support_browser()
-    case.cfg['choices'] = ['Add a "go to task" shortcut', 'Add a "new browser window here" shortcut', 'Yes']
+    case.cfg['choices'] = ['Yes']
     result = case.run_setup('--dry-run')
     print(result.stdout)
-    assert ' go")' in result.stdout
-    assert ' browser")' in result.stdout
+    assert ' send")' in result.stdout
+    assert ' finish")' in result.stdout
+    assert ' go")' not in result.stdout
+    assert ' browser")' not in result.stdout
+    assert 'send --silent' not in result.stdout
     case.unchanged()
     assert not (case.root / 'state').exists()
     print('PASS: consented setup preview wrote no bindings, backups or state and did not reload.')
-    print('CLI: taskspaces setup --dry-run upgrading three shortcuts (mock consent and compositor)')
-    core = case.core_block()
-    case.support_browser()
-    case.cfg['choices'] = ['Add a "go to task" shortcut', 'Add a "new browser window here" shortcut', 'Yes']
+    print('CLI: taskspaces setup --dry-run preserves existing block (mock compositor)')
+    case.cfg['choices'] = ['Yes']
+    case.run_setup()
+    core = case.bindings.read_text()
+    for backup in case.backups():
+        backup.unlink()
+    (case.root / 'events.jsonl').unlink()
     result = case.run_setup('--dry-run')
     print(result.stdout)
-    assert ' go")' in result.stdout
-    assert ' browser")' in result.stdout
+    assert 'Already set up' in result.stderr
     case.unchanged(core)
-    print('PASS: browser upgrade preview changed no bindings, wrote no backups and did not reload.')
+    print('PASS: re-running setup changed no bindings, wrote no backups and did not reload.')
 finally:
     case.doCleanups()

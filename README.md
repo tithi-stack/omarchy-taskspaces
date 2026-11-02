@@ -13,7 +13,7 @@ Picking workspace numbers, remembering what lives where, and tidying up are work
 
 ## How it works
 
-1. **Start:** Press your send key (`Super+N` by default). Accept the name suggested from the window title with Enter; the window moves to the task's workspace and you follow it. Silent send (`Super+Alt+N` by default) lets you stay where you are.
+1. **Start:** Press your send key (`Super+N` by default). Accept the name suggested from the window title with Enter; the window moves to the task's workspace and you follow it. An optional silent-send binding lets you stay where you are.
 2. **Work:** Open the windows you need inside the task. The bar shows the task name; there are no workspace notes or shortcuts per workspace to remember.
 3. **Finish:** Press your finish key (`Super+D` by default), then choose Close or Keep. The menu shows where kept windows will go. Close sends normal close requests; a window left open keeps the task unfinished and triggers a notification.
 
@@ -60,21 +60,21 @@ If a shortcut is already taken, setup names what uses it and offers a free alter
 
 Updates: `omarchy plugin update tithi-stack.taskspaces`. The bindings point at the helper inside the plugin folder, so you do not change them after an update.
 
-Already have setup's main shortcuts? Run setup again to add the optional **Go to task** shortcut or the browser shortcut. Existing optional shortcuts stay in place.
+Re-running setup leaves an existing managed block unchanged, including an older five-key block. To replace it with two keys, run `taskspaces setup --remove`, then `taskspaces setup`; each change asks for confirmation and makes a backup.
 
 ## Bindings
 
-Setup is the primary path. After the optional PATH link, run `taskspaces setup` to check whether shortcuts are already installed. `taskspaces setup --dry-run` asks the same questions and prints the block after Yes, without writing or reloading.
+Setup offers only `Super+N` for start, send, go and rename through its menu, and `Super+D` for finish. After the optional PATH link, run `taskspaces setup` to check whether shortcuts are already installed. `taskspaces setup --dry-run` asks the same questions and prints the block after Yes, without writing or reloading.
 
 These are suggested defaults. Use the actual keys you chose in setup or in your manual bindings. After manual changes, run `hyprctl reload` and `hyprctl configerrors`.
 
 | Suggested default | Action | Command |
 |---|---|---|
 | `SUPER + N` | Send the focused window to a task, then follow it | `taskspaces send` |
-| `SUPER + ALT + N` | Send the focused window to a task, and stay here | `taskspaces send --silent` |
+| `SUPER + ALT + N` (manual, optional) | Send the focused window to a task, and stay here | `taskspaces send --silent` |
 | `SUPER + D` | Finish the current task | `taskspaces finish` |
-| `SUPER + ALT + T` (optional) | Go to a task by name | `taskspaces go` |
-| `SUPER + ALT + B` (optional) | Open a new browser window here | `taskspaces browser` |
+| `SUPER + ALT + T` (manual, optional) | Go to a task by name | `taskspaces go` |
+| `SUPER + ALT + B` (manual, optional) | Open a new browser window here | `taskspaces browser` |
 
 `taskspaces --help` prints usage. `taskspaces --version` prints `0.1.0`.
 
@@ -106,9 +106,9 @@ Paste these suggested defaults into `${XDG_CONFIG_HOME:-$HOME/.config}/hypr/bind
 -- taskspaces: send the focused window to a task, or finish the task
 local taskspaces_bin = os.getenv("HOME") .. "/.config/omarchy/plugins/tithi-stack.taskspaces/bin/taskspaces"
 o.bind("SUPER + N", "Send window to task", taskspaces_bin .. " send")
-o.bind("SUPER + ALT + N", "Send window to task (stay here)", taskspaces_bin .. " send --silent")
 o.bind("SUPER + D", "Finish task", taskspaces_bin .. " finish")
--- Optional: check that the key is free before uncommenting.
+-- Optional: check that each key is free before uncommenting.
+-- o.bind("SUPER + ALT + N", "Send window to task (stay here)", taskspaces_bin .. " send --silent")
 -- o.bind("SUPER + ALT + T", "Go to task", taskspaces_bin .. " go")
 -- o.bind("SUPER + ALT + B", "New browser window here", taskspaces_bin .. " browser")
 ```
@@ -130,7 +130,7 @@ Press your finish key (`Super+D` by default) to finish. With one window, choose 
 
 Choose one. If you choose Close and an app keeps its window open, for example to ask you to save, the task stays unfinished. Taskspaces waits up to 30 seconds. It stops early after 10 seconds with no windows closing if no new window has appeared, then names up to three windows still open. Windows are checked again before the choice runs. Paired tasks act only on the reviewed windows; a new window keeps the task unfinished.
 
-To send without following, press your silent send key (`Super+Alt+N` by default) in step 2. The full menu rows and naming rules are in [How Taskspaces works](docs/how-it-works.md).
+To send without following, add the optional `Super+Alt+N` binding above and press it in step 2. The full menu rows and naming rules are in [How Taskspaces works](docs/how-it-works.md).
 
 On a numbered workspace, **Turn this workspace into a task…** names the current workspace without moving its windows; finishing that task with Keep leaves the windows there and restores the workspace's numbered name. Its grey line says `name this workspace · windows stay here`. Suggested names are capped at 35 characters so the first row always reads `Start task "<name>"`. Names you type are capped at 40 characters. Quotes and backslashes are removed from task names; names taken from an app are cleaned too. A name made only of digits gets `Task ` in front, for example `Task 2`.
 
@@ -146,7 +146,7 @@ Silent send leaves you where you are; its notification reads `Sent to "Field Job
 
 To return without moving a window, left-click the bar label (task name or window title), choose **Go to a task…** in the send menu, or run `taskspaces go`.
 The widget itself never focuses, moves or closes a window. A click only launches your own Go-to-task list; focusing happens only when you pick a row. Hover still shows the full label with a **click for tasks** hint.
-Setup offers an optional **Go to task** shortcut, starting with `Super+Alt+T`.
+For a direct key, paste the optional `Super+Alt+T` binding above after checking it is free.
 Choose a task to focus it; the bar shows its name.
 If the Go-to list has no tasks, the notification reads `No tasks yet`.
 
@@ -160,7 +160,7 @@ Omarchy's stock browser launcher can hand a request to the running Chromium brow
 
 Supported Chromium browsers: Chromium, Google Chrome (`google-chrome-stable`), Brave, Brave Origin, and Microsoft Edge (`microsoft-edge-stable`). With no saved profiles, it reports `No browser profiles found.`; open your browser normally first to create one.
 
-Setup offers this as a separate optional shortcut before the final confirmation. It starts with `Super+Alt+B` (B for browser); if taken, it offers `Super+Alt+W`, then `Super+Alt+C` when free, your own key, or a skip. The stock browser shortcut stays in place. Removing setup's shortcuts with `taskspaces setup --remove` also removes its optional browser line.
+For a direct key, paste the optional `Super+Alt+B` binding above after checking it is free. Setup does not offer a browser binding. `setup --remove` removes any optional lines inside its marked block, including those from an older setup; bindings pasted outside the block stay in place.
 
 ## Uninstall
 
