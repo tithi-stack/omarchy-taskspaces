@@ -12,6 +12,8 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- Receive bar-label clicks through the bar host’s root `triggerPress` hook; the inner MouseArea handles hover only. Ignore other mouse buttons and hide the tooltip before opening the list.
+
 - The send key can name an empty numbered workspace or rename an empty task, with navigation when other tasks exist and a warning when leaving it empty would lose its name.
 
 ## [0.1.0] - Unreleased

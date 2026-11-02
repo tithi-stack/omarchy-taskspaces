@@ -17,9 +17,13 @@ class WidgetTests(unittest.TestCase):
         self.assertEqual(manifest['entryPoints']['barWidget'], 'TaskLabel.qml')
         self.assertIn('left-click for Go to task', manifest['barWidget']['description'])
         source = (ROOT / 'TaskLabel.qml').read_text()
-        self.assertIn('onClicked: Util.execArgv([root.taskspacesCommand, "go"])', source)
-        self.assertNotIn('Qt.NoButton', source)
+        self.assertRegex(source, r"(?m)^  function triggerPress\(button\) \{")
+        self.assertIn('Util.execArgv([root.taskspacesCommand, "go"])', source)
+        self.assertIn('acceptedButtons: Qt.NoButton', source)
+        self.assertNotIn('onClicked:', source)
         self.assertNotIn('Hover only', source)
+        self.assertNotIn('TSDIAG', source)
+        self.assertIn('omarchy-restart-shell', (ROOT / 'docs/how-it-works.md').read_text())
         for name in ('TaskLabel.qml', 'README.md', 'SECURITY.md',
                      'docs/how-it-works.md', 'CHANGELOG.md'):
             with self.subTest(file=name):
@@ -29,7 +33,7 @@ class WidgetTests(unittest.TestCase):
                 self.assertRegex(text, r'focusing happens only when (?:the user picks|you pick) a row')
                 self.assertNotRegex(text, r'Read-only:|never handles a click|only reads the workspace name|reads only the workspace name')
 
-    def test_mouse_actions_offscreen(self):
+    def test_bar_slot_dispatch_offscreen(self):
         runner = shutil.which('qmltestrunner')
         if not runner and Path('/usr/lib/qt6/bin/qmltestrunner').exists():
             runner = '/usr/lib/qt6/bin/qmltestrunner'
@@ -38,9 +42,16 @@ class WidgetTests(unittest.TestCase):
         source = (ROOT / 'TaskLabel.qml').read_text()
         command = re.search(r'^  readonly property string taskspacesCommand:.*$', source, re.M)[0]
         mouse = re.search(r'  MouseArea \{.*?\n  \}', source, re.S)[0]
-        # Exercise the actual MouseArea with a launch recorder instead of the
-        # host singleton. Nothing launches or connects to the real compositor.
-        mouse = mouse.replace('Util.execArgv', 'recorder.execArgv')
+        trigger = re.search(r'  function triggerPress\(button\) \{.*?\n  \}', source, re.S)[0]
+        trigger = trigger.replace('Util.execArgv', 'recorder.execArgv')
+        bindings = '\n'.join(re.findall(
+            r'^  (?:readonly )?property (?:bool|string) (?:taskActive|glyph|showWindowTitle|label|interactive|pressable|concealed):.*$',
+            source, re.M))
+        visibility = re.search(r'^  visible:.*$', source, re.M)[0]
+        opacity = re.search(r'^  opacity:.*$', source, re.M)
+        # Keep the widget's actual root eligibility properties and trigger hook.
+        # The overlay below mimics Bar.qml's slot dispatch, rather than sending
+        # presses straight to the inner MouseArea. No real process is launched.
         mouse = mouse.replace('MouseArea {', 'MouseArea {\n    objectName: "mouse"', 1)
         with tempfile.TemporaryDirectory(prefix='taskspaces-widget-') as folder:
             plugin = Path(folder) / "plugin space ' # % ü"
@@ -49,7 +60,12 @@ class WidgetTests(unittest.TestCase):
 Item {
   id: root
   width: 300; height: 40
-  property bool taskActive: true
+  property bool vertical: false
+  property var settings: ({})
+  function setting(name, fallback) {
+    var value = settings[name]
+    return value === undefined || value === null ? fallback : value
+  }
   property string taskName: "Project plan"
   property string title: "Project notes"
   property var ws: ({id: 7})
@@ -67,7 +83,8 @@ Item {
   }
   property alias calls: recorder.calls
   property alias tooltip: host.tooltip
-''' + command + '\n' + mouse + '\n}\n')
+''' + command + '\n' + bindings + '\n' + visibility + '\n'
+                + (opacity[0] if opacity else '') + '\n' + trigger + '\n' + mouse + '\n}\n')
             test = plugin / 'tst_click.qml'
             test.write_text('''import QtQuick
 import QtTest
@@ -77,9 +94,39 @@ TestCase {
   when: windowShown
   width: 400; height: 100
   TestLabel { id: label }
+  // Eligibility and activeItem fallback from Omarchy Bar.qml. An overlay owns
+  // presses, as modulePointer does; the widget MouseArea cannot receive them.
+  function moduleTargetClickable(target) {
+    return target
+      && target.visible !== false
+      && target.opacity !== 0
+      && target.interactive !== false
+      && target.pressable !== false
+      && target.concealed !== true
+      && typeof target.triggerPress === "function"
+  }
+  MouseArea {
+    id: modulePointer
+    z: 10
+    width: label.width; height: label.height
+    acceptedButtons: Qt.LeftButton
+    onClicked: function(mouse) {
+      if (moduleTargetClickable(label)) label.triggerPress(mouse.button)
+      else mouse.accepted = false
+    }
+  }
   function test_clicks() {
     var area = findChild(label, "mouse")
-    compare(area.acceptedButtons, Qt.LeftButton)
+    compare(area.acceptedButtons, Qt.NoButton)
+    verify(moduleTargetClickable(label))
+    compare(typeof label.triggerPress, "function")
+    label.triggerPress(Qt.RightButton)
+    label.triggerPress(Qt.MiddleButton)
+    compare(label.calls.length, 0)
+    label.triggerPress(Qt.LeftButton)
+    compare(label.calls.length, 1)
+    compare(label.calls[0], [label.taskspacesCommand, "go"])
+    label.calls = []
     compare(area.cursorShape, Qt.PointingHandCursor)
     compare(label.taskspacesCommand, ''' + json.dumps(str(plugin / 'bin/taskspaces')) + ''')
     mouseMove(label, 10, 10)
@@ -90,14 +137,26 @@ TestCase {
     mouseClick(label, 10, 10, Qt.LeftButton)
     compare(label.calls.length, 1)
     compare(label.calls[0], [label.taskspacesCommand, "go"])
+    compare(label.tooltip, "")
     mouseMove(label, 350, 60)
     tryCompare(label, "tooltip", "")
-    label.taskActive = false
+    label.taskName = ""
     mouseMove(label, 10, 10)
     tryCompare(label, "tooltip", "Project notes · click for tasks")
     mouseClick(label, 10, 10, Qt.LeftButton)
     compare(label.calls.length, 2)
     compare(label.calls[1], [label.taskspacesCommand, "go"])
+    label.opacity = 0
+    verify(!moduleTargetClickable(label))
+    mouseClick(modulePointer, 10, 10, Qt.LeftButton)
+    compare(label.calls.length, 2)
+    label.opacity = 1
+    label.settings = {showWindowTitle: false}
+    verify(!moduleTargetClickable(label))
+    mouseClick(modulePointer, 10, 10, Qt.LeftButton)
+    compare(label.calls.length, 2)
+    label.settings = {showWindowTitle: true}
+    verify(moduleTargetClickable(label))
     label.bar = null
     mouseMove(label, 350, 60)
     mouseMove(label, 10, 10)

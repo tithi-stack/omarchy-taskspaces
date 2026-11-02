@@ -7,6 +7,7 @@ import qs.Commons as Commons
 import qs.Ui
 
 // Shows the task name of the active workspace, or the active window title.
+// The bar host forwards left clicks to triggerPress.
 // The widget itself never focuses, moves or closes a window. A left click opens
 // the user's Go-to-task list; focusing happens only when the user picks a row.
 BarWidget {
@@ -14,6 +15,13 @@ BarWidget {
   moduleName: "tithi-stack.taskspaces"
 
   readonly property string taskspacesCommand: decodeURIComponent(String(Qt.resolvedUrl("bin/taskspaces")).replace(/^file:\/\//, ""))
+
+  // The bar host owns slot clicks; the inner MouseArea handles hover only.
+  function triggerPress(button) {
+    if (button !== Qt.LeftButton) return
+    if (root.bar) root.bar.hideTooltip(root)
+    Util.execArgv([root.taskspacesCommand, "go"])
+  }
 
   readonly property var monitor: {
     var window = root.QsWindow.window
@@ -75,13 +83,12 @@ BarWidget {
     }
   }
 
-  // Reuse the CLI list for both task names and window titles.
+  // Keep hover feedback while the bar host dispatches clicks to triggerPress.
   MouseArea {
     anchors.fill: parent
     hoverEnabled: true
-    acceptedButtons: Qt.LeftButton
+    acceptedButtons: Qt.NoButton
     cursorShape: Qt.PointingHandCursor
-    onClicked: Util.execArgv([root.taskspacesCommand, "go"])
     onEntered: if (root.bar) root.bar.showTooltip(root, (root.taskActive ? root.taskName + " · workspace " + root.ws.id : root.title) + " · click for tasks")
     onExited: if (root.bar) root.bar.hideTooltip(root)
   }
