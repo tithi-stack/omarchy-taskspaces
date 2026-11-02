@@ -74,6 +74,7 @@ Icons are Material Design glyphs from the Nerd Font shipped with Omarchy.
 `taskspaces go` opens **Go to task**, listing every task by name with the same window summaries and most-recently-used order.
 Selecting a task focuses its workspace without moving your current window. Experimental two-screen behavior is described in [Two-screen tasks](#two-screen-tasks).
 The send menu's **Go to a task…** row opens this list too, as does `taskspaces send` with no focused window.
+When opened from the task menu, the Go list has a **Back** row that returns to that menu; Escape closes it, and direct Go or bar clicks have no Back row.
 With no tasks, the notification reads `No tasks yet`.
 `go --dry-run` prints the focus plan for the first task without opening menus, writing state or a lock, or dispatching commands.
 The bar resolves its own active workspace through the task records after a send-and-follow or a Go-to selection.

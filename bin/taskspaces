@@ -270,16 +270,20 @@ build_task_rows() {
     | select(any(.members[]; .id == $excluded) | not)' <<< "$tasks")
 }
 go_task() {
-  local selection record candidate target='' name
+  local selection record candidate target='' name allow_back=${1:-false}
+  local back=$'Back\treturn to the task menu'
   local -a rows=()
   local -A task_rows=()
   workspaces=$(hyprctl workspaces -j)
   prune without-reconcile
   if [[ $tasks == '[]' ]]; then notify 'No tasks yet'; return; fi
   build_task_rows
+  if $allow_back; then rows+=("$(printf '󰁍\t%s' "$back")"); fi
   if $dry; then selection=${rows[0]#*$'\t'}; else
     selection=$(omarchy-menu-select 'Go to task' "${rows[@]}" -- --width 600) || return 0
   fi
+  # The parent owns this flag and keeps its captured window/workspace and rows.
+  if $allow_back && [[ $selection == "$back" ]]; then go_back=true; return; fi
   while IFS= read -r record; do
     candidate=$(jq -r .id <<< "$record")
     if [[ $selection == "${task_rows[$candidate]}" ]]; then
@@ -299,7 +303,7 @@ go_task() {
   mark_used "$target"
 }
 empty_workspace_task() {
-  local workspace source source_record selection action
+  local workspace source source_record selection action go_back=false
   local adopt=$'Turn this workspace into a task…\tname this empty workspace'
   local rename=$'Rename this task…\tchange this empty task name'
   local go=$'Go to a task…\tswitch to another task'
@@ -331,16 +335,21 @@ empty_workspace_task() {
     printf 'Task menu: %s\n' "${rows[@]}"
     return
   fi
-  selection=$(omarchy-menu-select 'Task' "${rows[@]}" -- --width 600) || return 0
-  if [[ $selection == "$go" && ${#rows[@]} -gt 1 ]]; then
-    go_task
-  elif [[ $selection == "$action" ]]; then
-    if [[ -n $source_record ]]; then rename_task "$source" '' "$source_record" true
-    else make_workspace_task "$source" '' true; fi
-  fi
+  while :; do
+    selection=$(omarchy-menu-select 'Task' "${rows[@]}" -- --width 600) || return 0
+    if [[ $selection == "$go" && ${#rows[@]} -gt 1 ]]; then
+      go_back=false
+      go_task true
+      if $go_back; then continue; fi
+    elif [[ $selection == "$action" ]]; then
+      if [[ -n $source_record ]]; then rename_task "$source" '' "$source_record" true
+      else make_workspace_task "$source" '' true; fi
+    fi
+    return
+  done
 }
 send_task() {
-  local window address cls title source return_source source_name suggested selection target name record candidate started=false
+  local window address cls title source return_source source_name suggested selection target name record candidate started=false go_back=false
   if [[ -n $requested_address ]]; then
     window=$(hyprctl clients -j | jq -c --arg address "$requested_address" 'first(.[] | select(.address == $address and .mapped != false)) // {}')
   else window=$(hyprctl activewindow -j); fi
@@ -376,10 +385,18 @@ send_task() {
     can_adopt=true
     rows+=("$(printf '󰉗\t%s' "$adopt")")
   fi
-  if $dry; then selection=$first; else
-    selection=$(omarchy-menu-select 'Task' "${rows[@]}" -- --width 600) || return 0
-  fi
-  if [[ $selection == "$go" && $tasks != '[]' ]]; then go_task; return; fi
+  while :; do
+    if $dry; then selection=$first; else
+      selection=$(omarchy-menu-select 'Task' "${rows[@]}" -- --width 600) || return 0
+    fi
+    if [[ $selection == "$go" && $tasks != '[]' ]]; then
+      go_back=false
+      go_task true
+      if $go_back; then continue; fi
+      return
+    fi
+    break
+  done
   if [[ $selection == "$rename" && -n $source_record ]]; then
     rename_task "$source" "$cls" "$source_record"
     return

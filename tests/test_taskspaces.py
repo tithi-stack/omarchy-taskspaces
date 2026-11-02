@@ -187,7 +187,10 @@ elif cmd == 'omarchy-menu-select':
     if cfg.get('select_first'):
         print(args[1].split('\t', 1)[1])
     else:
-        print(cfg['selections'].pop(0) if cfg.get('selections') else cfg.get('selection', 'Cancel'))
+        selection = cfg['selections'].pop(0) if cfg.get('selections') else cfg.get('selection', 'Cancel')
+        if selection is None:
+            save(); sys.exit(1)  # Escape/close can cancel a particular submenu.
+        print(selection)
     save()
 elif cmd == 'omarchy-menu-input':
     cfg.update(cfg.get('input_updates', {}))
@@ -646,6 +649,95 @@ class TaskTests(unittest.TestCase):
         self.run_task('send')
         self.assertEqual(self.menu()[0], 'Go to task')
         self.assert_no_moves()
+
+    def test_go_back_reopens_both_parent_menus_repeatedly_without_changes(self):
+        original = copy.deepcopy(self.cfg)
+        for empty in (False, True):
+            with self.subTest(empty=empty):
+                self.cfg = copy.deepcopy(original)
+                if empty:
+                    self.empty_workspace()
+                self.parked()
+                (self.root / 'events.jsonl').write_text('')
+                go = 'Go to a task…\t' + ('switch to another task' if empty else
+                                         'switch tasks · leaves this window here')
+                back = 'Back\treturn to the task menu'
+                self.cfg['selections'] = [go, back, go, back, go, back, 'Cancel']
+                before = {p.name: p.read_bytes() for p in self.state.glob('*.json')}
+                windows = copy.deepcopy(self.cfg['clients'])
+                workspaces = copy.deepcopy(self.cfg['workspaces'])
+                self.run_task('send')
+                menus = self.events('omarchy-menu-select')
+                self.assertEqual([m[0] for m in menus], ['Task', 'Go to task'] * 3 + ['Task'])
+                for menu in menus[::2]:
+                    self.assertEqual(menu, menus[0])
+                for menu in menus[1::2]:
+                    self.assertEqual(menu[-4], '󰁍\t' + back)
+                self.assertEqual(self.dispatches(), [])
+                self.assertFalse(any(a[0] == 'eval' for a in self.events('hyprctl')))
+                self.assertEqual({p.name: p.read_bytes() for p in self.state.glob('*.json')}, before)
+                self.assertEqual(self.cfg['clients'], windows)
+                self.assertEqual(self.cfg['workspaces'], workspaces)
+
+    def test_direct_go_has_no_back_row(self):
+        self.parked()
+        self.cfg['selection'] = 'Back\treturn to the task menu'
+        self.run_task('go')
+        self.assertFalse(any(row.startswith('󰁍\tBack\t') for row in self.menu()))
+        self.assertEqual(len(self.events('omarchy-menu-select')), 1)
+        self.assertEqual(self.dispatches(), [])
+
+    def test_task_named_back_is_distinct_from_back_navigation(self):
+        self.cfg['workspaces'].append(real_workspace(3, 'Back'))
+        self.cfg['clients'].append(real_window('0xdef', 'kitty', 'Notes', 3, 'Back'))
+        (self.state / '3.json').write_text(json.dumps({'id': 3, 'name': 'Back', 'source': 1}))
+        self.cfg['selections'] = ['Go to a task…\tswitch tasks · leaves this window here', 'Back\tTerminal']
+        self.run_task('send')
+        self.assertIn('󰉒\tBack\tTerminal', self.menu())
+        self.assertEqual(self.menu()[-4], '󰁍\tBack\treturn to the task menu')
+        self.assertEqual(self.dispatches(), ['hl.dsp.focus({ workspace = "3" })'])
+
+    def test_escape_in_go_list_exits_both_parent_menus(self):
+        original = copy.deepcopy(self.cfg)
+        for empty in (False, True):
+            with self.subTest(empty=empty):
+                self.cfg = copy.deepcopy(original)
+                if empty:
+                    self.empty_workspace()
+                self.parked()
+                (self.root / 'events.jsonl').write_text('')
+                go = 'Go to a task…\t' + ('switch to another task' if empty else
+                                         'switch tasks · leaves this window here')
+                self.cfg['selections'] = [go, None]
+                before = {p.name: p.read_bytes() for p in self.state.glob('*.json')}
+                self.run_task('send')
+                self.assertEqual([m[0] for m in self.events('omarchy-menu-select')], ['Task', 'Go to task'])
+                self.assertEqual(self.dispatches(), [])
+                self.assertFalse(any(a[0] == 'eval' for a in self.events('hyprctl')))
+                self.assertEqual({p.name: p.read_bytes() for p in self.state.glob('*.json')}, before)
+
+    def test_back_preserves_original_window_when_focus_changes(self):
+        self.parked()
+        self.cfg['menu_updates'] = {'activewindow': copy.deepcopy(self.cfg['clients'][1])}
+        self.cfg['selections'] = ['Go to a task…\tswitch tasks · leaves this window here',
+                                  'Back\treturn to the task menu',
+                                  'Send to "Quarterly budget"\tTerminal ×2 · moves this window']
+        self.run_task('send')
+        self.assertEqual(self.dispatches(), [
+            'hl.dsp.window.move({ window = "address:0xabc", workspace = "4", follow = true })'])
+        self.assertEqual(next(w['workspace']['id'] for w in self.cfg['clients'] if w['address'] == '0xdef'), 3)
+
+    def test_back_preserves_original_empty_workspace_when_focus_changes(self):
+        self.empty_workspace()
+        self.parked()
+        self.cfg['menu_updates'] = {'activeworkspace': real_workspace(1, '1', 0)}
+        self.cfg['selections'] = ['Go to a task…\tswitch to another task',
+                                  'Back\treturn to the task menu',
+                                  'Turn this workspace into a task…\tname this empty workspace']
+        self.run_task('send')
+        self.assertEqual(self.dispatches(), ['hl.dsp.workspace.rename({ workspace = "2", name = "Planning" })'])
+        self.assertEqual(self.cfg['activeworkspace']['id'], 1)
+        self.assertEqual(json.loads((self.state / '2.json').read_text())['source'], 2)
 
     def test_send_named_task_shared_suggestion_and_silent(self):
         self.parked()
