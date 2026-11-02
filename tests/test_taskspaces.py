@@ -2230,6 +2230,23 @@ class AllocationBaseTests(unittest.TestCase):
     events = TaskTests.events
     dispatches = TaskTests.dispatches
     menu = TaskTests.menu
+    screens = MultiMonitorTests.screens
+    two_screen_setting = MultiMonitorTests.two_screen_setting
+    active = MultiMonitorTests.active
+    pair = MultiMonitorTests.pair
+    labels = MultiMonitorTests.labels
+    finish_here = MultiMonitorTests.finish_here
+
+    def paired(self, first=6):
+        self.screens()
+        self.set_settings(first=first, two_screen=True)
+
+    def new_pair(self, primary):
+        self.run_task('send')
+        return json.loads((self.state / f'{primary}.json').read_text())
+
+    def assert_pair_ids(self, record, expected):
+        self.assertEqual([m['id'] for m in record['members']], expected)
 
     def first_workspace(self):
         reader = runpy.run_path(str(SCRIPT.with_name('taskspaces-members')))['first_task_workspace']
@@ -2340,6 +2357,152 @@ class AllocationBaseTests(unittest.TestCase):
         self.assertFalse((self.state / '3.json').exists())
         self.assertEqual(next(w['name'] for w in self.cfg['workspaces'] if w['id'] == 3), '3')
         self.assertEqual(self.cfg['clients'][0]['workspace']['id'], 3)
+
+    def test_layout_only_rules_below_default_give_six_and_seven_then_eight_and_nine(self):
+        self.paired()
+        path = self.root / 'config/omarchy/shell.json'
+        config = json.loads(path.read_text())
+        del config['bar']['layout']['center'][0]['firstTaskWorkspace']
+        path.write_text(json.dumps(config))
+        rules = [dict(workspaceString=str(i), enabled=True) for i in (1, 2, 4)]
+        self.cfg['workspacerules'] = copy.deepcopy(rules)
+        self.assert_pair_ids(self.new_pair(6), [6, 7])
+        self.assertEqual(self.active(), {'eDP-1': 6, 'HDMI-A-1': 7})
+        incoming = real_window('0x111', 'kitty', 'Next task', 2, '2')
+        self.cfg['clients'].append(incoming)
+        self.cfg['activewindow'] = copy.deepcopy(incoming)
+        self.assert_pair_ids(self.new_pair(8), [8, 9])
+        self.assertEqual(self.cfg['workspacerules'][:3], rules)
+
+    def test_base_one_restores_three_and_five_with_same_layout_only_rules(self):
+        self.paired(first=1)
+        self.cfg['workspacerules'] = [dict(workspaceString=str(i), enabled=True) for i in (1, 2, 4)]
+        self.assert_pair_ids(self.new_pair(3), [3, 5])
+
+    def test_client_on_six_moves_pair_to_eight_and_nine(self):
+        self.paired()
+        self.cfg['workspaces'].append(real_workspace(6, '6'))
+        self.cfg['clients'].append(real_window('0x666', 'kitty', 'Own window', 6, '6'))
+        self.assert_pair_ids(self.new_pair(8), [8, 9])
+        self.assertEqual(next(w for w in self.cfg['clients'] if w['address'] == '0x666')['workspace']['id'], 6)
+
+    def test_rule_on_six_moves_pair_to_eight_and_nine(self):
+        self.paired()
+        rule = dict(workspaceString='6', enabled=True)
+        self.cfg['workspacerules'] = [copy.deepcopy(rule)]
+        self.assert_pair_ids(self.new_pair(8), [8, 9])
+        self.assertEqual(self.cfg['workspacerules'][0], rule)
+
+    def test_gap_on_seven_moves_pair_to_next_block(self):
+        self.paired()
+        self.cfg['workspacerules'] = [dict(workspaceString='7', enabled=True)]
+        self.assert_pair_ids(self.new_pair(8), [8, 9])
+
+    def test_disabled_and_special_rules_do_not_block_allocation(self):
+        self.paired()
+        self.cfg['workspacerules'] = [dict(workspaceString=str(i), enabled=False) for i in (6, 7)]
+        self.cfg['workspacerules'].append(dict(workspaceString='special:scratchpad', enabled=True))
+        self.cfg['workspaces'].append(real_workspace(-98, 'special:scratchpad'))
+        self.cfg['clients'].append(real_window('0x999', 'kitty', 'Scratch', -98, 'special:scratchpad'))
+        self.assert_pair_ids(self.new_pair(6), [6, 7])
+
+    def test_active_workspaces_are_reserved_above_base(self):
+        self.paired()
+        for mon, wid in zip(self.cfg['monitors'], (7, 8)):
+            ws = dict(real_workspace(wid, str(wid), 0), monitor=mon['name'])
+            self.cfg['workspaces'].append(ws)
+            mon['activeWorkspace'] = dict(ws)
+        self.assert_pair_ids(self.new_pair(10), [10, 11])
+
+    def test_named_and_persistent_workspaces_reserve_their_blocks(self):
+        self.paired()
+        self.cfg['workspaces'].extend([real_workspace(6, 'Personal project', 0),
+                                       dict(real_workspace(8, '8', 0), ispersistent=True)])
+        self.assert_pair_ids(self.new_pair(10), [10, 11])
+        self.assertEqual(next(w['name'] for w in self.cfg['workspaces'] if w['id'] == 6), 'Personal project')
+
+    def test_absent_task_member_still_reserves_its_block(self):
+        self.pair(empty_other=True)
+        record = json.loads((self.state / '3.json').read_text())
+        record['members'][1]['id'] = 7
+        record['members'][1]['name'] = 'Planning ·'
+        (self.state / '3.json').write_text(json.dumps(record))
+        self.cfg['workspaces'] = [w for w in self.cfg['workspaces'] if w['id'] != 4]
+        incoming = real_window('0x111', 'kitty', 'Next', 2, '2')
+        self.cfg['clients'].append(incoming)
+        self.cfg['activewindow'] = copy.deepcopy(incoming)
+        self.set_settings(first=6, two_screen=True)
+        self.assert_pair_ids(self.new_pair(8), [8, 9])
+
+    def test_adopt_workspace_three_claims_companion_from_base(self):
+        self.paired()
+        ws = real_workspace(3, '3')
+        self.cfg['workspaces'].append(ws)
+        self.cfg['activeworkspace'] = copy.deepcopy(ws)
+        self.cfg['monitors'][0]['activeWorkspace'] = copy.deepcopy(ws)
+        self.cfg['activewindow']['workspace'] = {'id': 3, 'name': '3'}
+        self.cfg['clients'] = [copy.deepcopy(self.cfg['activewindow'])]
+        self.cfg['select_first'] = False
+        self.cfg['selection'] = 'Turn this workspace into a task…\tname this workspace · windows stay here'
+        self.assert_pair_ids(self.new_pair(3), [3, 6])
+        self.assertEqual(self.cfg['clients'][0]['workspace']['id'], 3)
+
+    def test_adopt_empty_low_workspace_claims_companion_from_base(self):
+        self.paired()
+        self.cfg['clients'] = []
+        self.cfg['activewindow'] = {}
+        self.cfg['workspaces'][1]['windows'] = 0
+        self.assert_pair_ids(self.new_pair(2), [2, 6])
+
+    def test_existing_low_pair_keeps_ids_after_base_changes(self):
+        self.pair()
+        self.set_settings(first=50, two_screen=True)
+        self.run_task('go')
+        record = json.loads((self.state / '3.json').read_text())
+        self.assert_pair_ids(record, [3, 4])
+        self.assertEqual(set(self.active().values()), {3, 4})
+        incoming = real_window('0x111', 'kitty', 'Next', 2, '2')
+        self.cfg['clients'].append(incoming)
+        self.cfg['activewindow'] = copy.deepcopy(incoming)
+        self.assert_pair_ids(self.new_pair(50), [50, 51])
+        self.assert_pair_ids(json.loads((self.state / '3.json').read_text()), [3, 4])
+
+    def test_allocation_above_ten_and_labels_have_no_workspace_cap(self):
+        self.paired(first=11)
+        self.assert_pair_ids(self.new_pair(11), [11, 12])
+        labels = json.loads(self.labels().stdout)
+        self.assertEqual({i: entry['name'] for i, entry in labels.items()}, {'11': 'Planning', '12': 'Planning'})
+
+    def test_primary_stays_on_the_starting_screen(self):
+        self.paired(first=7)
+        for mon in self.cfg['monitors']:
+            mon['focused'] = mon['name'] == 'HDMI-A-1'
+        self.cfg['clients'][0]['monitor'] = 1
+        self.cfg['activewindow'] = copy.deepcopy(self.cfg['clients'][0])
+        record = self.new_pair(7)
+        self.assert_pair_ids(record, [7, 8])
+        self.assertEqual([m['output'] for m in record['members']], ['HDMI-A-1', 'eDP-1'])
+
+    def test_three_screens_use_single_workspace_at_base(self):
+        self.paired()
+        self.cfg['monitors'].append(dict(id=2, name='DP-2', focused=False, activeWorkspace={'id': 5, 'name': '5'}))
+        self.run_task('send')
+        record = json.loads((self.state / '6.json').read_text())
+        self.assertNotIn('members', record)
+        self.assertFalse(any(a[0] == 'eval' for a in self.events('hyprctl')))
+
+    def test_finished_block_can_be_reused_after_workspaces_disappear(self):
+        self.paired()
+        self.new_pair(6)
+        self.finish_here(6, 'Keep 1 window and finish')
+        self.assertFalse((self.state / '6.json').exists())
+        # A post-finish snapshot where Hyprland has dropped the empty slots.
+        self.cfg['workspaces'] = [w for w in self.cfg['workspaces'] if w['id'] < 6]
+        for mon, wid in zip(self.cfg['monitors'], (2, 1)):
+            mon['activeWorkspace'] = {'id': wid, 'name': str(wid)}
+        self.cfg['activewindow'] = copy.deepcopy(self.cfg['clients'][0])
+        self.cfg['select_first'] = True
+        self.assert_pair_ids(self.new_pair(6), [6, 7])
 
 
 if __name__ == '__main__':
