@@ -16,12 +16,23 @@
     "defaultSection": "center",
     "defaults": {
       "experimentalTwoScreenTasks": false,
+      "firstTaskWorkspace": 6,
       "maxWidth": 450,
       "showWindowTitle": true,
       "taskMaxWidth": 220,
       "taskGlyph": "󰌨"
     },
     "schema": [
+      {
+        "key": "firstTaskWorkspace",
+        "type": "integer",
+        "label": "First workspace for tasks",
+        "description": "Workspace numbers below this are kept for your own use. New tasks allocate numbers from here upwards.",
+        "min": 1,
+        "max": 50,
+        "step": 1,
+        "defaultValue": 6
+      },
       {
         "key": "experimentalTwoScreenTasks",
         "type": "boolean",

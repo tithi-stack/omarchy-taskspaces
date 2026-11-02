@@ -51,6 +51,24 @@ def two_screen_enabled():
         return False
 
 
+def first_task_workspace():
+    # Read the same inline widget entry as two_screen_enabled(). Keep the
+    # bounds in sync with firstTaskWorkspace in the widget settings schema.
+    config = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'omarchy/shell.json'
+    try:
+        data = json.loads(config.read_text())
+        layout = data['bar']['layout']
+        if data.get('version') == 1:
+            for section in ('left', 'center', 'right'):
+                for entry in layout.get(section, []):
+                    if isinstance(entry, dict) and entry.get('id') == 'tithi-stack.taskspaces':
+                        value = entry.get('firstTaskWorkspace')
+                        return value if type(value) is int and 1 <= value <= 50 else 6
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        pass
+    return 6
+
+
 def members(record, workspaces):
     if 'members' in record:
         result = record['members']
@@ -660,6 +678,8 @@ def main():
     pair = Pair(dry == 'true', Path(folder))
     if action == 'paired-enabled':
         sys.exit(0 if two_screen_enabled() else 1)
+    elif action == 'first-workspace':
+        print(first_task_workspace())
     elif action == 'records':
         workspaces = json.loads(args[0])
         tasks = records(pair.folder, workspaces, pair.dry, pair.read('clients'))

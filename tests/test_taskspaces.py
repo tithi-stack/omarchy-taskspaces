@@ -5,10 +5,12 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import runpy
 import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE.parent / 'bin' / 'taskspaces'
@@ -247,7 +249,16 @@ class TaskTests(unittest.TestCase):
         self.cfg = {'workspaces': [{'id': 1, 'name': '1'}, {'id': 2, 'name': '2'}],
                     'activewindow': win, 'clients': [win], 'activeworkspace': {'id': 2, 'name': '2'},
                     'selection': 'Turn this workspace into a task…\tname this workspace · windows stay here'}
+        # Existing behavior tests deliberately exercise legacy numbering.
+        self.set_settings()
         self.write_cfg()
+
+    def set_settings(self, first=1, two_screen=False, section='center'):
+        path = self.root / 'config/omarchy/shell.json'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({'version': 1, 'bar': {'layout': {section: [
+            {'id': 'tithi-stack.taskspaces', 'firstTaskWorkspace': first,
+             'experimentalTwoScreenTasks': two_screen}]}}}))
 
     def write_cfg(self):
         (self.root / 'config.json').write_text(json.dumps(self.cfg))
@@ -1426,6 +1437,7 @@ class TaskTests(unittest.TestCase):
 class MultiMonitorTests(unittest.TestCase):
     """Run actual commands with explicit workspace owners and output activation."""
     setUp = TaskTests.setUp
+    set_settings = TaskTests.set_settings
     write_cfg = TaskTests.write_cfg
     run_task = TaskTests.run_task
     events = TaskTests.events
@@ -1443,10 +1455,7 @@ class MultiMonitorTests(unittest.TestCase):
         self.cfg['select_first'] = True
 
     def two_screen_setting(self, value):
-        path = self.root / 'config/omarchy/shell.json'
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({'version': 1, 'bar': {'layout': {'center': [
-            {'id': 'tithi-stack.taskspaces', 'experimentalTwoScreenTasks': value}]}}}))
+        self.set_settings(two_screen=value)
 
     def test_two_screen_creation_requires_explicit_boolean_setting(self):
         for value in (None, False, 'true', 1):
@@ -2210,6 +2219,69 @@ class MultiMonitorTests(unittest.TestCase):
         self.assertEqual(positions['0xdef'], 3)
         self.assertEqual(positions['0xaaa'], 4)
         self.assertEqual(self.saved()['merged_windows'], [])
+
+
+class AllocationBaseTests(unittest.TestCase):
+    """New numbering defaults, with fake compositor data only."""
+    setUp = TaskTests.setUp
+    set_settings = TaskTests.set_settings
+    write_cfg = TaskTests.write_cfg
+    run_task = TaskTests.run_task
+    events = TaskTests.events
+    dispatches = TaskTests.dispatches
+    menu = TaskTests.menu
+
+    def first_workspace(self):
+        reader = runpy.run_path(str(SCRIPT.with_name('taskspaces-members')))['first_task_workspace']
+        with patch.dict(os.environ, self.env):
+            return reader()
+
+    def test_setting_reader_accepts_integer_bounds_in_each_bar_section(self):
+        for section in ('left', 'center', 'right'):
+            for value in (1, 6, 17, 50):
+                with self.subTest(section=section, value=value):
+                    self.set_settings(first=value, section=section)
+                    self.assertEqual(self.first_workspace(), value)
+
+    def test_invalid_setting_values_default_to_six(self):
+        for value in (None, True, False, 0, -1, '6', 6.0, 6.5, [], {}, 51, 1001, 10**18):
+            with self.subTest(value=value):
+                self.set_settings(first=value)
+                self.assertEqual(self.first_workspace(), 6)
+
+    def test_missing_or_malformed_config_defaults_to_six(self):
+        path = self.root / 'config/omarchy/shell.json'
+        path.unlink()
+        self.assertEqual(self.first_workspace(), 6)
+        for data in ('{', 'null', '[]', '{}', '{"version":2,"bar":{"layout":{}}}',
+                     '{"version":1,"bar":null}', '{"version":1,"bar":{"layout":{"left":null}}}',
+                     '{"version":1,"bar":{"layout":{"center":[{"id":"tithi-stack.taskspaces"}]}}}',
+                     '{"version":1,"bar":{"layout":{"center":[{"id":"other.widget","firstTaskWorkspace":1}]}}}'):
+            with self.subTest(data=data):
+                path.write_text(data)
+                self.assertEqual(self.first_workspace(), 6)
+
+    def test_setting_reader_uses_home_when_xdg_config_is_empty(self):
+        self.set_settings(first=12)
+        source = self.root / 'config/omarchy/shell.json'
+        target = self.root / '.config/omarchy/shell.json'
+        target.parent.mkdir(parents=True)
+        target.write_text(source.read_text())
+        self.env['XDG_CONFIG_HOME'] = ''
+        self.assertEqual(self.first_workspace(), 12)
+
+    def test_shell_reads_setting_through_member_tool(self):
+        self.set_settings(first=9)
+        result = self.run_task(code='source "$1"; dry=true; state_dir="$XDG_RUNTIME_DIR/taskspaces"; member_tool first-workspace')
+        self.assertEqual(result.stdout, '9\n')
+        self.assertEqual(self.events(), [])
+
+    def test_setting_schema_matches_reader_bounds_and_default(self):
+        widget = json.loads((SCRIPT.parent.parent / 'manifest.json').read_text())['barWidget']
+        field = next(f for f in widget['schema'] if f['key'] == 'firstTaskWorkspace')
+        self.assertEqual((field['type'], field['min'], field['max'], field['step'], field['defaultValue']),
+                         ('integer', 1, 50, 1, 6))
+        self.assertEqual(widget['defaults']['firstTaskWorkspace'], 6)
 
 
 if __name__ == '__main__':
