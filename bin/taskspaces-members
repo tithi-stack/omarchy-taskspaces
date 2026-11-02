@@ -29,6 +29,21 @@ def positive(value):
     return type(value) is int and value > 0
 
 
+def two_screen_enabled():
+    # BarWidget.setting() reads overrides inline in shell.json layout entries.
+    # Missing, null, malformed or non-boolean values keep this experiment off.
+    config = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'omarchy/shell.json'
+    try:
+        data = json.loads(config.read_text())
+        layout = data['bar']['layout']
+        return data.get('version') == 1 and any(
+            isinstance(entry, dict) and entry.get('id') == 'tithi-stack.taskspaces'
+            and entry.get('experimentalTwoScreenTasks') is True
+            for section in ('left', 'center', 'right') for entry in layout.get(section, []))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
 def members(record, workspaces):
     if 'members' in record:
         result = record['members']
@@ -380,6 +395,8 @@ class Pair:
         self.write(record)
 
     def new(self, wid, name, source, source_name, window, follow, adopt):
+        if not two_screen_enabled():
+            raise TaskError('Experimental two-screen tasks are off; start the task again')
         monitors = self.outputs()
         if len(monitors) != 2:
             raise TaskError('Screens changed while the menu was open; try again')
@@ -570,7 +587,9 @@ class Pair:
 def main():
     dry, folder, action, *args = sys.argv[1:]
     pair = Pair(dry == 'true', Path(folder))
-    if action == 'records':
+    if action == 'paired-enabled':
+        sys.exit(0 if two_screen_enabled() else 1)
+    elif action == 'records':
         workspaces = json.loads(args[0])
         tasks = records(pair.folder, workspaces, pair.dry)
         pair.reconcile(tasks, workspaces)

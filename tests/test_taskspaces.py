@@ -236,7 +236,7 @@ class TaskTests(unittest.TestCase):
         bindir.mkdir()
         for command in MOCKED:
             (bindir / command).symlink_to(self.mock)
-        self.env = dict(os.environ, MOCK_ROOT=str(self.root), XDG_RUNTIME_DIR=str(self.runtime),
+        self.env = dict(os.environ, HOME=str(self.root), MOCK_ROOT=str(self.root), XDG_RUNTIME_DIR=str(self.runtime),
                         XDG_CONFIG_HOME=str(self.root / 'config'),
                         PATH=str(bindir) + os.pathsep + os.environ['PATH'])
         win = {'address': '0xabc', 'class': 'kitty', 'title': 'Planning', 'mapped': True,
@@ -1467,6 +1467,7 @@ class MultiMonitorTests(unittest.TestCase):
     menu = TaskTests.menu
 
     def screens(self):
+        self.two_screen_setting(True)
         self.cfg['workspaces'] = [real_workspace(1, '1'), real_workspace(2, '2')]
         self.cfg['workspaces'][0]['monitor'] = 'HDMI-A-1'
         self.cfg['monitors'] = [dict(id=0, name='eDP-1', focused=True, activeWorkspace={'id': 2, 'name': '2'}),
@@ -1474,6 +1475,52 @@ class MultiMonitorTests(unittest.TestCase):
         self.cfg['clients'] = [real_window('0xabc', 'kitty', 'Planning', 2, '2')]
         self.cfg['activewindow'] = copy.deepcopy(self.cfg['clients'][0])
         self.cfg['select_first'] = True
+
+    def two_screen_setting(self, value):
+        path = self.root / 'config/omarchy/shell.json'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({'version': 1, 'bar': {'layout': {'center': [
+            {'id': 'tithi-stack.taskspaces', 'experimentalTwoScreenTasks': value}]}}}))
+
+    def test_two_screen_creation_requires_explicit_boolean_setting(self):
+        for value in (None, False, 'true', 1):
+            with self.subTest(value=value):
+                self.screens()
+                self.two_screen_setting(value)
+                self.run_task('send')
+                rec = json.loads((self.state / '3.json').read_text())
+                self.assertNotIn('members', rec)
+                self.assertEqual(self.active()['HDMI-A-1'], 1)
+                self.assertFalse(any(a[0] == 'eval' for a in self.events('hyprctl')))
+                (self.state / '3.json').unlink()
+
+    def test_missing_setting_and_empty_workspace_stay_single_screen(self):
+        self.screens()
+        (self.root / 'config/omarchy/shell.json').unlink()
+        self.cfg['activewindow'] = {}
+        self.cfg['clients'] = []
+        self.cfg['workspaces'][1]['windows'] = 0
+        self.cfg['activeworkspace'] = copy.deepcopy(self.cfg['workspaces'][1])
+        self.run_task('send')
+        rec = json.loads((self.state / '2.json').read_text())
+        self.assertNotIn('members', rec)
+        self.assertEqual(self.active()['HDMI-A-1'], 1)
+
+    def test_existing_pair_go_send_and_finish_work_with_setting_off(self):
+        self.start()
+        self.two_screen_setting(False)
+        self.run_task('go')
+        self.assertEqual(set(self.active().values()), {3, 4})
+        incoming = real_window('0x111', 'kitty', 'Extra', 2, '2')
+        self.cfg['clients'].append(incoming)
+        self.cfg['activewindow'] = copy.deepcopy(incoming)
+        self.cfg['select_first'] = False
+        self.cfg['selection'] = 'Send to "Planning"\tTerminal · moves this window'
+        self.run_task('send')
+        self.assertEqual(next(w for w in self.cfg['clients'] if w['address'] == '0x111')['workspace']['id'], 3)
+        self.finish_here(3, 'Keep 2 windows and finish')
+        self.assertEqual({w['workspace']['id'] for w in self.cfg['clients']}, {2})
+        self.assertFalse((self.state / '3.json').exists())
 
     def start(self, *args):
         self.screens()

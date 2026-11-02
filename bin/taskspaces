@@ -135,6 +135,7 @@ runpy.run_path(str(helper), run_name="__main__")
 ' "${BASH_SOURCE[0]}" "$dry" "$state_dir" "$@"
 }
 paired_available() {
+  member_tool paired-enabled || return 1
   [[ $(hyprctl monitors -j | jq '[.[] | select(.disabled != true and (.mirrorOf == null or .mirrorOf == "none"))] | length') == 2 ]]
 }
 prune() {

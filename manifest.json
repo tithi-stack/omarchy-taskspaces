@@ -15,12 +15,20 @@
     "allowMultiple": false,
     "defaultSection": "center",
     "defaults": {
+      "experimentalTwoScreenTasks": false,
       "maxWidth": 450,
       "showWindowTitle": true,
       "taskMaxWidth": 220,
       "taskGlyph": "󰌨"
     },
     "schema": [
+      {
+        "key": "experimentalTwoScreenTasks",
+        "type": "boolean",
+        "label": "Experimental two-screen tasks",
+        "description": "Use both screens for new tasks. Existing tasks keep their screens when this is off.",
+        "defaultValue": false
+      },
       {
         "key": "showWindowTitle",
         "type": "boolean",

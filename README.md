@@ -5,7 +5,7 @@ Send a window to a named task, open what you need across its screens, then close
 
 <img src="docs/assets/hero.png" width="800" alt="Send one window to a named task workspace, open the other windows you need there, then finish the group by closing its windows or moving them back.">
 
-Example: send one window to a task, then open the other windows you need inside it. With two connected screens, new tasks use both; Finish handles their combined windows.
+Example: send one window to a task, then open the other windows you need inside it. New tasks use one screen by default; the experimental setting lets a task use two.
 
 ## Why
 
@@ -21,7 +21,9 @@ On a numbered workspace, **Turn this workspace into a task…** names it without
 
 ## Two screens, one task
 
-New tasks automatically use both connected screens. Your chosen window stays on its starting screen, and the other screen starts empty. Each screen has its own native workspace, but both current bars show the same task name. Native workspace names are readable too: the task name, then the task name with a trailing `·` for the second screen (more markers only to avoid an existing name). A bar still running the old widget can safely display those names. Menus list the task once. One-screen machines keep the existing single-workspace flow; older tasks stay on one screen.
+Two-screen tasks are experimental and off by default; new tasks use only one workspace even with two screens connected. To opt in, enable **Experimental two-screen tasks** in the Taskspaces widget settings. This stores `"experimentalTwoScreenTasks": true` in the `tithi-stack.taskspaces` bar entry in `${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json`. Turning it off affects new tasks only; existing two-screen tasks still support Go, Send and Finish.
+
+With the experimental setting on, new tasks use both connected screens. Your chosen window stays on its starting screen, and the other screen starts empty. Each screen has its own native workspace, but both current bars show the same task name. Native workspace names are readable too: the task name, then the task name with a trailing `·` for the second screen (more markers only to avoid an existing name). A bar still running the old widget can safely display those names. Menus list the task once. One-screen machines keep the existing single-workspace flow; older tasks stay on one screen.
 
 **Go to task** switches both screens together and returns focus to the initiating screen. Send prepares and shows the destination before moving your chosen window to the task area matching its screen; silent send leaves both visible workspaces unchanged. Finish works from either screen, reviews the combined windows once, and returns kept windows to each area's safe starting workspace. For paired tasks, windows appearing after confirmation are left alone and keep the task unfinished. If a saved return workspace is unavailable, Keep chooses or creates an ordinary workspace on that area's connected screen.
 
