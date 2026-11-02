@@ -17,6 +17,14 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- Prepare and activate a normal Send destination before moving its chosen window, retaining the window at its source if preparation fails. Silent Send remains one window move with unchanged visible workspaces.
+- Release all owned member handles at Finish and orphaned handles at task refresh; recover a reused member still named by a dead record without moving or closing its windows. Paired allocation reuses eligible empty inactive numbered slots, preserving live windows, tasks and reservations.
+- Keep paired Finish fallbacks on each member's connected output; accept a numeric name during owned workspace creation; skip closed or changed split-back entries while restoring the remaining windows.
+- Refresh labels on debounced compositor events with a 30-second fallback instead of spawning Python every second on each bar.
+
+- Bind task-owned persistence rules to their requested output before empty-area creation. Flush scheduled property refresh immediately, verify placement, and use a targeted move only for repair before activating each screen and its area. The mock now enforces rule bindings and unbound-rule snap-back. Go repairs half-built tasks from the first paired-screen build.
+- Use readable task names with trailing markers for distinct native workspace names, so a bar still running the old widget never displays newly generated member jargon. Go migrates old generated names, and task rename updates both native names. Current labels continue showing the common task name on both screens.
+
 - Receive bar-label clicks through the bar host’s root `triggerPress` hook; the inner MouseArea handles hover only. Ignore other mouse buttons and hide the tooltip before opening the list.
 
 - The send key can name an empty numbered workspace or rename an empty task, with navigation when other tasks exist and a warning when leaving it empty would lose its name.

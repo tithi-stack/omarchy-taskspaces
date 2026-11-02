@@ -26,9 +26,28 @@ cfg = json.loads(cfgpath.read_text())
 cmd, args = Path(sys.argv[0]).name, sys.argv[1:]
 with (root / 'events.jsonl').open('a') as out:
     out.write(json.dumps([cmd, args]) + '\n')
-def save(): cfgpath.write_text(json.dumps(cfg))
+def refresh_rules():
+    if 'monitors' not in cfg: return
+    for rule in cfg.get('workspacerules', []):
+        if rule.get('enabled') is False or not rule.get('persistent') or not rule['workspaceString'].isdigit(): continue
+        owner = rule.get('monitor') or next(m for m in cfg['monitors'] if m.get('focused'))['name']
+        if not any(m['name'] == owner for m in cfg['monitors']): continue
+        wid = int(rule['workspaceString'])
+        ws = next((w for w in cfg['workspaces'] if w['id'] == wid), None)
+        if ws is None and not cfg.get('no_persistent_creation'):
+            name = str(wid) if cfg.get('numeric_first') else rule.get('defaultName', str(wid))
+            ws = {'id': wid, 'name': name, 'monitor': owner, 'windows': 0, 'ispersistent': True}
+            cfg['workspaces'].append(ws)
+        if ws is not None: ws['monitor'] = owner
+    for mon in cfg['monitors']:
+        ws = next((w for w in cfg['workspaces'] if w['id'] == mon['activeWorkspace']['id']), None)
+        if ws: mon['activeWorkspace'] = dict(ws)
+def save():
+    refresh_rules()
+    cfgpath.write_text(json.dumps(cfg))
 if cmd == 'hyprctl':
     if args[0] in ('workspaces', 'clients', 'activewindow', 'activeworkspace', 'monitors', 'workspacerules'):
+        save()
         if args[0] == 'clients' and 'polls_since_close' in cfg:
             cfg['polls_since_close'] += 1
             if cfg.get('close_after_polls') == cfg['polls_since_close']:
@@ -43,17 +62,35 @@ if cmd == 'hyprctl':
             print('mock rule failure'); sys.exit(0)
         cfg.setdefault('workspacerules', [])
         cfg.setdefault('owned_rules', {})
+        if code.startswith('-- taskspaces orphan cleanup'):
+            live = {int(n) for n in re.findall(r'\[([0-9]+)\]', code.split('local stale')[0])}
+            stale = {int(n) for n in re.findall(r'\[([0-9]+)\]', code.split('local stale')[1].split('for key')[0])}
+            for key in list(cfg['owned_rules']):
+                if int(key) not in live or int(key) in stale:
+                    cfg['owned_rules'].pop(key)
+                    for rule in cfg['workspacerules']:
+                        if rule['workspaceString'] == key: rule['enabled'] = False
+            save(); print('ok'); sys.exit(0)
         key = re.search(r'taskspaces:([0-9]+)', code)[1]
-        if 'hl.workspace_rule' in code:
+        if 'hl.workspace_rule' in code and (key in cfg['owned_rules'] or '; else ' in code):
             wid = int(key)
             name = re.search(r'default_name = "([^"]+)"', code)[1]
             cfg['owned_rules'][key] = name
-            cfg['workspacerules'].append({'workspaceString': key, 'enabled': True})
+            rule = next((r for r in cfg['workspacerules'] if r['workspaceString'] == key and r.get('enabled') is not False), None)
+            if rule is None:
+                rule = {'workspaceString': key}
+                cfg['workspacerules'].append(rule)
+            rule.update(enabled=True, persistent=True, defaultName=name)
+            binding = re.search(r'monitor = "([^"]+)"', code)
+            if binding: rule['monitor'] = binding[1]
             if not cfg.get('no_persistent_creation') and not any(w['id'] == wid for w in cfg['workspaces']):
-                owner = next(m for m in cfg['monitors'] if m.get('focused'))['name']
-                cfg['workspaces'].append({'id': wid, 'name': name, 'monitor': owner, 'windows': 0, 'ispersistent': True})
-        if 'r:set_enabled(false)' in code:
-            cfg['workspacerules'] = [r for r in cfg['workspacerules'] if r['workspaceString'] != key or key not in cfg['owned_rules']]
+                binding = re.search(r'monitor = "([^"]+)"', code)
+                owner = binding[1] if binding and not cfg.get('ignore_rule_monitor') else next(m for m in cfg['monitors'] if m.get('focused'))['name']
+                cfg['workspaces'].append({'id': wid, 'name': str(wid) if cfg.get('numeric_first') else name, 'monitor': owner, 'windows': 0, 'ispersistent': True})
+        if 'r:set_enabled(false)' in code and key in cfg['owned_rules']:
+            cfg['owned_rules'].pop(key)
+            for rule in cfg['workspacerules']:
+                if rule['workspaceString'] == key: rule['enabled'] = False
         save(); print('ok')
     elif args[0] == 'dispatch':
         dsp = args[1]
@@ -88,10 +125,17 @@ if cmd == 'hyprctl':
                 owner = re.search(r'monitor = "([^"]+)"', dsp)[1]
                 for m in cfg['monitors']: m['focused'] = m['name'] == owner
         if dsp.startswith('hl.dsp.workspace.move'):
-            dest = int(re.search(r'workspace = "([0-9]+)"', dsp)[1])
+            selected = re.search(r'workspace = "([0-9]+)"', dsp)
+            if selected and cfg.get('ignore_targeted_workspace_move'):
+                save(); print('ok'); sys.exit(0)
+            dest = int(selected[1]) if selected else next(m for m in cfg['monitors'] if m.get('focused'))['activeWorkspace']['id']
             owner = re.search(r'monitor = "([^"]+)"', dsp)[1]
             for w in cfg['workspaces']:
                 if w['id'] == dest: w['monitor'] = owner
+            if selected is None:
+                for m in cfg['monitors']:
+                    m['focused'] = m['name'] == owner
+                    if m['focused']: m['activeWorkspace'] = dict(next(w for w in cfg['workspaces'] if w['id'] == dest))
         if dsp.startswith('hl.dsp.window.move'):
             dest = int(re.search(r'workspace = "([0-9]+)"', dsp)[1])
             if not any(w['id'] == dest for w in cfg['workspaces']):
@@ -1519,7 +1563,7 @@ class MultiMonitorTests(unittest.TestCase):
         self.cfg['no_persistent_creation'] = True
         self.run_task('go')
         self.assertEqual(self.active()['HDMI-A-1'], 4)
-        self.assertEqual(next(w for w in self.cfg['workspaces'] if w['id'] == 4)['name'], 'taskspaces-3-2')
+        self.assertEqual(next(w for w in self.cfg['workspaces'] if w['id'] == 4)['name'], 'Planning ·')
 
     def test_prune_retains_pair_when_both_members_missing(self):
         self.pair(empty_other=True)
@@ -1563,7 +1607,9 @@ class MultiMonitorTests(unittest.TestCase):
         self.run_task('go')
         calls = [a[1] for a in self.events('hyprctl') if a[0] == 'eval' and 'taskspaces:3' in a[1]]
         self.assertTrue(calls)
-        self.assertTrue(all('hl.workspace_rule' not in c for c in calls))
+        self.assertTrue(all('; else ' not in c for c in calls))
+        self.assertNotIn('3', self.cfg['owned_rules'])
+        self.assertEqual(self.cfg['workspacerules'][0], {'workspaceString': '3', 'enabled': True})
 
     def test_send_routes_address_to_matching_screen_silently(self):
         self.pair()
@@ -1750,8 +1796,8 @@ class MultiMonitorTests(unittest.TestCase):
         self.run_task('go')
         self.cfg['clients'][1]['stableId'] = 'different-window'
         self.reconnect()
-        self.run_task('go', expected=1)
-        self.assertEqual(len(self.saved()['merged_windows']), 1)
+        self.run_task('go')
+        self.assertEqual(self.saved()['merged_windows'], [])
         self.assertEqual(self.cfg['clients'][1]['workspace']['id'], 3)
 
     def test_documented_command_symlink_finds_companion_helper(self):
@@ -1765,6 +1811,201 @@ class MultiMonitorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual((self.state / '3.json').read_bytes(), before)
         self.assertEqual(self.dispatches(), [])
+
+    def test_wrong_screen_creation_with_ignored_targeted_move_is_repaired(self):
+        self.screens()
+        self.cfg['ignore_targeted_workspace_move'] = True
+        self.run_task('send')
+        self.assertEqual(self.active(), {'eDP-1': 3, 'HDMI-A-1': 4})
+        self.assertEqual(self.owners()[4], 'HDMI-A-1')
+        self.assertTrue(any(a[0] == 'eval' and 'hl.exec_scheduled_prop_refresh_immediately()' in a[1] for a in self.events('hyprctl')))
+        self.assertTrue(any(r.get('monitor') == 'HDMI-A-1' and r.get('persistent') for r in self.cfg['workspacerules']))
+
+    def test_go_repairs_reported_half_built_task_without_stale_bar_jargon(self):
+        self.screens()
+        task = dict(id=1, name='Planning', source=2, source_name='2', created=100,
+                    members=[dict(id=1, name='taskspaces-1-1', output='eDP-1', source=2, source_name='2'),
+                             dict(id=3, name='taskspaces-1-2', output='HDMI-A-1', source=2, source_name='2')])
+        (self.state / '1.json').write_text(json.dumps(task))
+        self.cfg['workspaces'] = [real_workspace(1, 'taskspaces-1-1'), real_workspace(2, '2', 0), real_workspace(3, 'taskspaces-1-2', 0)]
+        self.cfg['workspaces'][1]['monitor'] = 'HDMI-A-1'
+        self.cfg['monitors'][0]['activeWorkspace'] = {'id': 1, 'name': 'taskspaces-1-1'}
+        self.cfg['monitors'][1]['activeWorkspace'] = {'id': 2, 'name': '2'}
+        self.cfg['clients'] = [real_window('0xabc', 'kitty', 'Planning', 1, 'taskspaces-1-1')]
+        self.cfg['ignore_targeted_workspace_move'] = True
+        self.cfg['workspacerules'] = [{'workspaceString': '1', 'enabled': True}, {'workspaceString': '3', 'enabled': True}]
+        self.cfg['owned_rules'] = {'3': 'taskspaces-1-2'}
+        self.run_task('go')
+        self.assertEqual(self.active(), {'eDP-1': 1, 'HDMI-A-1': 3})
+        self.assertEqual(self.owners()[3], 'HDMI-A-1')
+        record = json.loads((self.state / '1.json').read_text())
+        self.assertEqual([m['name'] for m in record['members']], ['Planning', 'Planning ·'])
+        # An OLD widget displays the raw workspace name: those names must also
+        # be readable, while the current widget resolves both to the shared name.
+        for screen in self.cfg['monitors']:
+            self.assertIn(screen['activeWorkspace']['name'], ['Planning', 'Planning ·'])
+        self.assertNotIn('taskspaces-1-', str(self.events('omarchy-notification-send')))
+
+    def test_new_member_names_are_readable_by_old_bar_and_rules_bind_outputs(self):
+        rec = self.start()
+        self.assertEqual([m['name'] for m in rec['members']], ['Planning', 'Planning ·'])
+        for screen in self.cfg['monitors']:
+            self.assertIn(screen['activeWorkspace']['name'], ['Planning', 'Planning ·'])
+        self.assertNotIn('taskspaces-3-', str(self.events('omarchy-notification-send')))
+        rules = [a[1] for a in self.events('hyprctl') if a[0] == 'eval' and 'hl.workspace_rule' in a[1]]
+        self.assertTrue(any('monitor = "HDMI-A-1"' in code and 'default_name = "Planning ·"' in code for code in rules))
+        self.assertTrue(any('monitor = "eDP-1"' in code and 'default_name = "Planning"' in code for code in rules))
+
+    def test_readable_companion_name_avoids_existing_workspace_names(self):
+        self.screens()
+        other = real_workspace(5, 'Planning ·')
+        other['monitor'] = 'HDMI-A-1'
+        self.cfg['workspaces'].append(other)
+        self.run_task('send')
+        self.assertEqual([m['name'] for m in self.saved()['members']], ['Planning', 'Planning · ·'])
+        self.assertEqual(next(w['name'] for w in self.cfg['workspaces'] if w['id'] == 5), 'Planning ·')
+
+    def test_follow_send_prepares_visible_destination_before_moving_window(self):
+        self.pair()
+        win = real_window('0x111', 'kitty', 'Incoming', 2, '2')
+        self.cfg['clients'].append(win)
+        self.cfg['activewindow'] = win
+        self.cfg['select_first'] = False
+        self.cfg['selection'] = 'Send to "Planning"\tTerminal, Chrome · moves this window'
+        self.cfg['fail_matching'] = 'hl.dsp.focus'
+        self.run_task('send', expected=1)
+        self.assertEqual(next(w['workspace']['id'] for w in self.cfg['clients'] if w['address'] == '0x111'), 2)
+        self.assertFalse(any('window.move' in d for d in self.dispatches()))
+
+    def test_follow_send_window_is_on_the_visible_member_of_its_screen(self):
+        self.pair()
+        win = real_window('0x111', 'kitty', 'Incoming', 1, '1')
+        win['monitor'] = 1
+        self.cfg['clients'].append(win)
+        self.cfg['activewindow'] = win
+        self.cfg['select_first'] = False
+        self.cfg['selection'] = 'Send to "Planning"\tTerminal, Chrome · moves this window'
+        self.run_task('send')
+        sent = next(w for w in self.cfg['clients'] if w['address'] == '0x111')
+        self.assertEqual(sent['workspace']['id'], self.active()['HDMI-A-1'])
+        self.assertEqual(self.cfg['activeworkspace']['id'], 4)
+
+    def test_prune_releases_orphan_owned_rule_and_preserves_windows(self):
+        self.screens()
+        self.cfg['workspaces'].append(real_workspace(5, 'taskspaces-99-2'))
+        self.cfg['clients'].append(real_window('0x999', 'kitty', 'Keep me', 5, 'taskspaces-99-2'))
+        self.cfg['workspacerules'] = [{'workspaceString': '5', 'enabled': True, 'persistent': True, 'defaultName': 'taskspaces-99-2'},
+                                    {'workspaceString': '2', 'enabled': True}]
+        self.cfg['owned_rules'] = {'5': 'taskspaces-99-2'}
+        self.run_task('go')
+        self.assertFalse(self.cfg['workspacerules'][0]['enabled'])
+        self.assertEqual(self.cfg['owned_rules'], {})
+        self.assertEqual(next(w['name'] for w in self.cfg['workspaces'] if w['id'] == 5), '5')
+        self.assertEqual(len(self.cfg['clients']), 2)
+        self.assertEqual(self.cfg['workspacerules'][1], {'workspaceString': '2', 'enabled': True})
+
+    def test_go_repairs_reused_member_named_by_dead_task_and_missing_primary(self):
+        self.screens()
+        def task(tid, name, mids, outputs):
+            return dict(id=tid, name=name, source=2, source_name='2', created=100, used=tid,
+                        members=[dict(id=wid, name=f'taskspaces-{tid}-{i}', output=output, source=2, source_name='2')
+                                 for i, (wid, output) in enumerate(zip(mids, outputs), 1)])
+        one = task(1, 'First task', [1, 3], ['eDP-1', 'HDMI-A-1'])
+        four = task(4, 'Second task', [4, 5], ['HDMI-A-1', 'eDP-1'])
+        for record in [one, four]:
+            (self.state / f'{record["id"]}.json').write_text(json.dumps(record))
+        self.cfg['workspaces'] = [real_workspace(1, 'taskspaces-1-1'), real_workspace(2, '2'),
+                                  real_workspace(3, 'taskspaces-1-2'), real_workspace(5, 'taskspaces-2-2')]
+        for ws in self.cfg['workspaces'][1:]: ws['monitor'] = 'HDMI-A-1'
+        self.cfg['clients'] = [real_window(hex(i + 100), 'kitty', f'Window {i}', ws['id'], ws['name'])
+                               for i, ws in enumerate(self.cfg['workspaces'])]
+        self.cfg['monitors'][0]['activeWorkspace'] = {'id': 1, 'name': 'taskspaces-1-1'}
+        self.cfg['monitors'][1]['activeWorkspace'] = {'id': 5, 'name': 'taskspaces-2-2'}
+        self.cfg['workspacerules'] = [{'workspaceString': str(w), 'enabled': True} for w in [1, 2, 4]]
+        self.cfg['workspacerules'] += [dict(workspaceString='3', enabled=True, persistent=True, defaultName='taskspaces-1-2'),
+                                      dict(workspaceString='5', enabled=True, persistent=True, defaultName='taskspaces-2-2')]
+        self.cfg['owned_rules'] = {'3': 'taskspaces-1-2', '5': 'taskspaces-2-2'}
+        self.cfg['select_first'] = False
+        self.cfg['selection'] = 'Second task\tTerminal'
+        self.cfg['ignore_targeted_workspace_move'] = True
+        self.run_task('go')
+        self.assertEqual(self.active(), {'eDP-1': 5, 'HDMI-A-1': 4})
+        self.assertEqual(len(self.cfg['clients']), 4)
+        self.assertEqual(next(w['name'] for w in self.cfg['workspaces'] if w['id'] == 5), 'Second task ·')
+        self.assertFalse((self.state / '2.json').exists())
+        self.assertFalse(any(r.get('enabled') is not False and r.get('defaultName') == 'taskspaces-2-2' for r in self.cfg['workspacerules']))
+        self.assertTrue(any(r.get('enabled') and r.get('defaultName') == 'taskspaces-1-2' for r in self.cfg['workspacerules']))
+        rule_count = len(self.cfg['workspacerules'])
+        self.run_task('go')
+        self.assertEqual(len(self.cfg['workspacerules']), rule_count)
+        self.assertEqual(self.active(), {'eDP-1': 5, 'HDMI-A-1': 4})
+
+    def test_finish_disables_every_owned_member_rule_and_drops_handles(self):
+        self.start()
+        self.finish_here(4, 'Close 1 window and finish')
+        self.assertEqual(self.cfg['owned_rules'], {})
+        self.assertFalse(any(r.get('enabled') is not False for r in self.cfg['workspacerules']))
+        self.assertFalse((self.state / '3.json').exists())
+
+    def test_pair_allocation_reuses_empty_inactive_slots_after_orphan_release(self):
+        self.screens()
+        self.cfg['workspaces'].extend([real_workspace(3, '3', 0), real_workspace(4, '4'), real_workspace(5, 'taskspaces-99-2', 0)])
+        self.cfg['clients'].append(real_window('0x444', 'kitty', 'Occupied', 4, '4'))
+        self.cfg['workspacerules'] = [dict(workspaceString='5', enabled=True, persistent=True, defaultName='taskspaces-99-2')]
+        self.cfg['owned_rules'] = {'5': 'taskspaces-99-2'}
+        self.run_task('send')
+        self.assertEqual([m['id'] for m in self.saved()['members']], [3, 5])
+        self.assertEqual(next(w['workspace']['id'] for w in self.cfg['clients'] if w['address'] == '0x444'), 4)
+
+    def test_numeric_name_is_accepted_while_owned_workspace_is_created(self):
+        self.screens()
+        self.cfg['numeric_first'] = True
+        self.run_task('send')
+        self.assertEqual(self.active(), {'eDP-1': 3, 'HDMI-A-1': 4})
+        self.assertEqual([m['name'] for m in self.saved()['members']], ['Planning', 'Planning ·'])
+
+    def test_unbound_rule_snap_back_is_repaired_by_bound_refresh(self):
+        self.pair(empty_other=True)
+        self.cfg['workspacerules'] = [dict(workspaceString='4', enabled=True, persistent=True, defaultName='taskspaces-3-2')]
+        self.cfg['owned_rules'] = {'4': 'taskspaces-3-2'}
+        self.write_cfg()
+        subprocess.run([str(self.root / 'bin/hyprctl'), 'workspaces', '-j'], env=self.env,
+                       text=True, capture_output=True, check=True)
+        self.cfg = json.loads((self.root / 'config.json').read_text())
+        self.assertEqual(self.owners()[4], 'eDP-1')
+        self.run_task('go')
+        self.assertEqual(self.owners()[4], 'HDMI-A-1')
+        rule = next(r for r in self.cfg['workspacerules'] if r['workspaceString'] == '4' and r.get('enabled'))
+        self.assertEqual(rule['monitor'], 'HDMI-A-1')
+        self.assertEqual(self.active(), {'eDP-1': 3, 'HDMI-A-1': 4})
+
+    def test_finish_keep_fallback_stays_on_the_member_output(self):
+        record = self.pair()
+        record['members'][1]['source'] = 88
+        record['members'][1]['source_name'] = '88'
+        (self.state / '3.json').write_text(json.dumps(record))
+        self.cfg['workspaces'][0]['monitor'] = 'eDP-1'
+        self.cfg['monitors'][1]['activeWorkspace'] = {'id': 4, 'name': 'taskspaces-3-2'}
+        self.finish_here(4, 'Keep 2 windows and finish')
+        external = next(w for w in self.cfg['clients'] if w['address'] == '0xdef')
+        self.assertNotEqual(external['workspace']['id'], 1)
+        self.assertEqual(self.owners()[external['workspace']['id']], 'HDMI-A-1')
+        self.assertEqual(self.active()['HDMI-A-1'], external['workspace']['id'])
+
+    def test_split_skips_changed_window_and_restores_other_windows(self):
+        self.pair()
+        extra = real_window('0xaaa', 'kitty', 'Another reference', 4, 'taskspaces-3-2')
+        extra['monitor'] = 1
+        self.cfg['clients'].append(extra)
+        self.unplug()
+        self.run_task('go')
+        self.cfg['clients'][1]['stableId'] = 'different-window'
+        self.reconnect()
+        self.run_task('go')
+        positions = {w['address']: w['workspace']['id'] for w in self.cfg['clients']}
+        self.assertEqual(positions['0xdef'], 3)
+        self.assertEqual(positions['0xaaa'], 4)
+        self.assertEqual(self.saved()['merged_windows'], [])
 
 
 if __name__ == '__main__':

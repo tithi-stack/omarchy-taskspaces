@@ -137,6 +137,7 @@ paired_available() {
 }
 prune() {
   tasks=$(member_tool records "$workspaces")
+  workspaces=$(hyprctl workspaces -j)
 }
 
 dedupe() {
@@ -414,12 +415,12 @@ send_task() {
     workspaces=$(hyprctl workspaces -j)
     if [[ $selection == "$first" ]]; then name=$(dedupe "$name" 35); else name=$(dedupe "$name"); fi
     target=$(first_free)
-    printf 'Target workspace: %s; name: %s; source: %s; address: %s\n' "$target" "$name" "$source" "$address"
     if paired_available; then
       member_tool new "$target" "$name" "$return_source" "$source_name" "$window" "$follow" false
       notify "Started task \"$name\""
       return
     fi
+    printf 'Target workspace: %s; name: %s; source: %s; address: %s\n' "$target" "$name" "$source" "$address"
     move_window "$address" "$target" "$follow"
     dispatch "hl.dsp.workspace.rename({ workspace = $(lua_string "$target"), name = $(lua_string "$name") })"
     if ! $dry; then

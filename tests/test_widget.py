@@ -273,4 +273,41 @@ TestCase {
         self.assertIn('monitor.activeWorkspace', source)
         self.assertIn('"true",', source)
         self.assertIn('"labels"]', source)
-        self.assertIn('interval: 1000', source)
+        self.assertIn('interval: 30000', source)
+        self.assertIn('taskLabelsRefresh.restart()', source)
+        self.assertIn('\"workspacev2\"', source)
+
+    def test_readable_native_names_are_safe_in_a_stale_bar(self):
+        runner = shutil.which('qmltestrunner') or '/usr/lib/qt6/bin/qmltestrunner'
+        if not Path(runner).exists():
+            self.skipTest('Qt QML test runner is not installed')
+        source = (ROOT / 'TaskLabel.qml').read_text()
+        resolver = re.search(r'  function taskForWorkspace\(workspace, labels\) \{.*?\n  \}', source, re.S)[0]
+        with tempfile.TemporaryDirectory(prefix='taskspaces-widget-') as folder:
+            test = Path(folder) / 'tst_stale.qml'
+            test.write_text('''import QtQuick
+import QtTest
+TestCase {
+  name: "ReadableNativeNames"
+''' + resolver + '''
+  // The old running widget used this expression directly as its task name.
+  function oldBarName(ws) { return ws && ws.name !== String(ws.id) ? ws.name : "" }
+  function test_old_and_current_bar() {
+    var labels = {
+      "1": {name: "Planning", workspace_name: "Planning"},
+      "3": {name: "Planning", workspace_name: "Planning ·"}
+    }
+    var screens = [{id: 1, name: "Planning"}, {id: 3, name: "Planning ·"}]
+    for (var i = 0; i < screens.length; ++i) {
+      compare(taskForWorkspace(screens[i], labels), "Planning")
+      verify(oldBarName(screens[i]).indexOf("Planning") === 0)
+      verify(oldBarName(screens[i]).indexOf("taskspaces-") === -1)
+      compare(taskForWorkspace(screens[i], {}), "")
+    }
+  }
+}
+''')
+            result = subprocess.run([runner, '-input', str(test)],
+                                    env=dict(os.environ, QT_QPA_PLATFORM='offscreen', XDG_RUNTIME_DIR=folder),
+                                    text=True, capture_output=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

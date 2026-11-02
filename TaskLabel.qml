@@ -37,8 +37,8 @@ BarWidget {
   }
   readonly property string taskName: taskForWorkspace(ws, taskLabels)
 
-  // Each bar resolves its own active workspace. Polling also catches metadata
-  // renames and recovery after config reload without a hot-plug listener.
+  // Each bar resolves its own active workspace. Debounced compositor events
+  // refresh labels; a slow fallback catches a lost event or metadata-only edit.
   Process {
     id: taskLabelsProcess
     command: ["python3", "-I", root.taskspacesCommand + "-members", "true",
@@ -52,10 +52,18 @@ BarWidget {
     }
   }
   Timer {
-    interval: 1000
+    id: taskLabelsRefresh
+    interval: 100
+    onTriggered: {
+      if (!taskLabelsProcess.running) taskLabelsProcess.running = true
+      else restart()
+    }
+  }
+  Timer {
+    interval: 30000
     running: true
     repeat: true
-    onTriggered: if (!taskLabelsProcess.running) taskLabelsProcess.running = true
+    onTriggered: taskLabelsRefresh.restart()
   }
   readonly property var toplevel: ToplevelManager.activeToplevel
   readonly property string title: toplevel ? (toplevel.title || toplevel.appId || "") : ""
@@ -87,6 +95,9 @@ BarWidget {
     target: Hyprland
     function onRawEvent(event) {
       if (event.name === "renameworkspace") Hyprland.refreshWorkspaces()
+      if (["workspace", "workspacev2", "focusedmon", "focusedmonv2", "renameworkspace",
+        "createworkspace", "createworkspacev2", "destroyworkspace", "destroyworkspacev2",
+        "moveworkspace", "moveworkspacev2"].indexOf(event.name) !== -1) taskLabelsRefresh.restart()
     }
   }
 

@@ -80,6 +80,7 @@ class Pair:
     def __init__(self, dry, folder):
         self.dry = dry
         self.folder = folder
+        self.return_targets = {}
 
     def read(self, kind):
         return json.loads(subprocess.check_output(['hyprctl', kind, '-j'], text=True))
@@ -117,34 +118,150 @@ class Pair:
         owned = {m['id']: m for m in record['members']}
         for ws in workspaces:
             if ws['id'] in owned and ws['name'] not in (
-                    owned[ws['id']]['name'], record.get('pending_names', {}).get(str(ws['id']))):
+                    owned[ws['id']]['name'], str(ws['id']), record.get('pending_names', {}).get(str(ws['id']))):
                 raise TaskError('Workspace ' + str(ws['id']) + ' changed name; task retained for inspection')
         for other in records(self.folder, workspaces):
             if other['id'] != record['id'] and owned.keys() & {m['id'] for m in other['members']}:
                 raise TaskError('Task workspace ownership conflicts; tasks retained')
         return workspaces
 
-    def rule(self, member, release=False):
-        # Never replace a pre-existing numeric workspace rule. Only handles in
-        # this private Lua table can be enabled/disabled; config reload expires
-        # them. A numeric rule is used so persistence recreates the reserved ID.
+    def reconcile(self, tasks, workspaces):
+        """Release only owned orphan handles and repair dead generated names.
+
+        A different live task's name is still a conflict. The narrow recovery
+        exception is a generated name whose originating task record is absent.
+        """
+        if self.dry:
+            return
+        task_ids = {t['id'] for t in tasks}
+        owners = {m['id']: t for t in tasks for m in t['members']}
         rules = self.read('workspacerules')
-        existing = any(r.get('workspaceString') == str(member['id']) for r in rules)
+        stale = set()
+        for rule in rules:
+            old = re.fullmatch(r'taskspaces-(\d+)-[12]', rule.get('defaultName', ''))
+            selector = rule.get('workspaceString', '')
+            if old and rule.get('enabled') is not False and int(old[1]) not in task_ids and selector.isdigit():
+                stale.add(int(selector))
+        if any(r.get('enabled') is not False and r.get('persistent') and r.get('defaultName') for r in rules):
+            live_table = ', '.join('[' + str(i) + '] = true' for i in sorted(owners))
+            stale_table = ', '.join('[' + str(i) + '] = true' for i in sorted(stale))
+            code = ('-- taskspaces orphan cleanup\nlocal live = { ' + live_table
+                    + ' }; local stale = { ' + stale_table + ' }; '
+                    + 'for key, r in pairs(_G.__taskspaces_rules or {}) do '
+                    + 'local id = tonumber(key:match("^taskspaces:(%d+)$")); '
+                    + 'if id and (not live[id] or stale[id]) then '
+                    + 'r:set_enabled(false); _G.__taskspaces_rules[key] = nil end end')
+            self.command('eval', code)
+            for rule in self.read('workspacerules'):
+                if rule.get('workspaceString', '').isdigit() and int(rule['workspaceString']) in stale and rule.get('enabled') is not False:
+                    raise TaskError('Orphan task rule has no releasable owned handle; task retained for inspection')
+        repaired = set()
+        for ws in workspaces:
+            old = re.fullmatch(r'taskspaces-(\d+)-[12]', ws['name'])
+            if not old or int(old[1]) in task_ids:
+                continue
+            owner = owners.get(ws['id'])
+            if owner:
+                owner.setdefault('pending_names', {})[str(ws['id'])] = ws['name']
+                self.write(owner)
+                repaired.add(owner['id'])
+            else:
+                # Keep every window; only remove the name of a dead task.
+                self.rename(ws, str(ws['id']))
+        for record in tasks:
+            if record['id'] in repaired:
+                self.readable_members(record, force=True)
+
+    def free_ids(self, tasks, workspaces, extra=()):
+        """For paired creation, reuse only empty, inactive ordinary slots."""
+        reserved = {m['id'] for t in tasks for m in t['members']} | set(extra)
+        reserved.update(w['workspace']['id'] for w in self.read('clients'))
+        reserved.update(m['activeWorkspace']['id'] for m in self.outputs())
+        reserved.update(int(r['workspaceString']) for r in self.read('workspacerules')
+                        if r.get('enabled') is not False and r.get('workspaceString', '').isdigit())
+        reserved.update(w['id'] for w in workspaces if w.get('ispersistent') or w['name'] != str(w['id']))
+        return next(i for i in range(1, len(reserved) + 2) if i not in reserved)
+
+    def workspace_names(self, record, workspaces):
+        owned = {m['id'] for m in record['members']}
+        used = {w['name'] for w in workspaces if w['id'] not in owned}
+        for other in records(self.folder, workspaces):
+            if other['id'] != record['id']:
+                used.add(other['name'])
+                used.update(m['name'] for m in other['members'])
+        names = []
+        candidate = record['name']
+        for _ in record['members']:
+            while candidate in used:
+                candidate += ' ·'
+            names.append(candidate)
+            used.add(candidate)
+        return names
+
+    def readable_members(self, record, force=False):
+        # Older builds exposed generated names to a shell still running the old
+        # widget. Use readable native names too, keeping them distinct for Lua
+        # name selectors. The record tracks authorized intermediate names.
+        if not force and not any(m['name'] == f'taskspaces-{record["id"]}-{i}'
+                                 for i, m in enumerate(record['members'], 1)):
+            return
+        workspaces = self.snapshot(record)
+        names = self.workspace_names(record, workspaces)
+        for member, name in zip(record['members'], names):
+            old_name = member['name']
+            ws = next((w for w in workspaces if w['id'] == member['id']), None)
+            if old_name == name and (ws is None or ws['name'] == name):
+                continue
+            record.setdefault('pending_names', {})[str(member['id'])] = ws['name'] if ws else old_name
+            member['name'] = name
+            self.write(record)
+            # Update an owned persistence handle as well, so recreation cannot
+            # restore the old generated name after a successful migration.
+            connected = {m['name'] for m in self.outputs()}
+            migration_output = member['output'] if member['output'] in connected else (ws.get('monitor') if ws else None)
+            self.rule(member, output=migration_output)
+            current = next((w for w in self.read('workspaces') if w['id'] == member['id']), None)
+            if current is not None:
+                self.rename(member, name)
+        if not self.dry:
+            live = self.snapshot(record)
+            for member in record['members']:
+                ws = next((w for w in live if w['id'] == member['id']), None)
+                if ws is not None and ws['name'] != member['name']:
+                    raise TaskError('Task name update could not be verified; task retained')
+                record.get('pending_names', {}).pop(str(member['id']), None)
+        self.write(record)
+
+    def rule(self, member, release=False, output=None):
+        # Never replace a pre-existing numeric workspace rule. Only handles in
+        # this private Lua table can be updated/disabled; config reload expires
+        # them. Bind creation to the requested output before refresh can create
+        # an empty workspace on the currently focused/default monitor.
+        rules = self.read('workspacerules')
+        existing = any(r.get('workspaceString') == str(member['id']) and r.get('enabled') is not False for r in rules)
         key = lua('taskspaces:' + str(member['id']))
         code = '_G.__taskspaces_rules = _G.__taskspaces_rules or {}; local r = _G.__taskspaces_rules[' + key + ']; '
+        spec = ('hl.workspace_rule({ workspace = ' + lua(member['id'])
+                + ', persistent = true, monitor = ' + lua(output or member['output'])
+                + ', default_name = ' + lua(member['name']) + ' })')
+        register = '_G.__taskspaces_rules[' + key + '] = ' + spec
         if release:
-            code += 'if r then r:set_enabled(false) end'
+            code += 'if r then r:set_enabled(false); _G.__taskspaces_rules[' + key + '] = nil end'
         else:
-            code += 'if r and r:is_enabled() ~= nil then r:set_enabled(true)'
+            # Re-register only OUR enabled handle; Hyprland merges its fields
+            # into the same rule. This also repairs pre-binding build handles.
+            code += 'if r and r:is_enabled() ~= nil then r:set_enabled(true); ' + register
             if not existing:
-                code += '; else _G.__taskspaces_rules[' + key + '] = hl.workspace_rule({ workspace = ' + lua(member['id']) + ', persistent = true, default_name = ' + lua(member['name']) + ' })'
+                code += '; else ' + register
             code += ' end'
+        code += '; hl.exec_scheduled_prop_refresh_immediately()'
         self.command('eval', code)
 
     def ensure(self, record, member, output, visible=True):
         workspaces = self.snapshot(record)
-        self.rule(member)
-        # Runtime rule refresh is deferred by the compositor. Observe it before
+        self.rule(member, output=output)
+        workspaces = self.snapshot(record)
+        # Observe the explicit refresh before
         # deciding that a lost empty member needs the focus-based fallback.
         for _ in range(5):
             if self.dry or any(w['id'] == member['id'] for w in workspaces):
@@ -164,6 +281,11 @@ class Pair:
         if ws is not None and ws['name'] != member['name']:
             self.rename(member, member['name'])
         if ws is None or ws.get('monitor') != output:
+            if not visible:
+                raise TaskError('Task area needs visible placement repair; use Go to restore the task')
+            # The scout confirmed the targeted selector against Hyprland's
+            # running source. Rule refresh fixes placement first; this is only
+            # repair for an existing area, followed by an ownership check.
             self.command('dispatch', 'hl.dsp.workspace.move({ workspace = ' + lua(member['id']) + ', monitor = ' + lua(output) + ' })')
         if not self.dry:
             live = self.snapshot(record)
@@ -203,6 +325,7 @@ class Pair:
             (m['name'] for m in monitors if m.get('focused')), monitors[0]['name'])
 
     def go(self, record, preferred=None):
+        self.readable_members(record)
         workspaces = self.snapshot(record)
         monitors = self.outputs()
         if not monitors or len(monitors) > 2:
@@ -235,7 +358,9 @@ class Pair:
                 captured = entry['window']
                 win = self.window(captured)
                 if win and not self.same_window(captured, win):
-                    raise TaskError('Merged window identity changed; recovery record retained')
+                    # This address now identifies a changed/replaced window.
+                    # Leave it alone and continue restoring the other windows.
+                    win = None
                 if win:
                     if win['workspace']['id'] == entry['merged_into']:
                         self.move(win, entry['member'])
@@ -245,8 +370,10 @@ class Pair:
                 record['merged_windows'].remove(entry)
                 self.write(record)
             for member in record['members']:
+                self.focus(output=member['output'])
                 self.focus(member['id'])
             last = next((m for m in record['members'] if m['output'] == focus), record['members'][0])
+            self.focus(output=last['output'])
             self.focus(last['id'])
         record['used'] = int(time.time())
         self.write(record)
@@ -258,39 +385,52 @@ class Pair:
         workspaces = self.read('workspaces')
         output = self.screen(window or {'workspace': {'id': source}}, monitors, workspaces)
         now = int(time.time())
-        used = {w['id'] for w in workspaces}
-        for task in records(self.folder, workspaces):
-            used.update(m['id'] for m in task['members'])
-        if not adopt and wid in used:
-            raise TaskError('Destination became occupied; try again')
+        tasks = records(self.folder, workspaces)
+        if not adopt:
+            wid = self.free_ids(tasks, workspaces)
         if adopt and not any(w['id'] == wid and w['name'] == str(wid) for w in workspaces):
             raise TaskError('Starting workspace changed; try again')
-        used.add(wid)
-        companion = next(i for i in range(1, len(used) + 2) if i not in used)
-        primary = dict(id=wid, name=f'taskspaces-{wid}-1', output=output, source=source, source_name=source_name)
+        companion = self.free_ids(tasks, workspaces, [wid])
+        print(f'Target workspace: {wid}; name: {name}; source: {source}; address: {window.get("address", "")}')
+        primary = dict(id=wid, name=name, output=output, source=source, source_name=source_name)
         other = next(m for m in monitors if m['name'] != output)
         origin = other['activeWorkspace']
-        secondary = dict(id=companion, name=f'taskspaces-{wid}-2', output=other['name'],
+        secondary = dict(id=companion, name=name + ' ·', output=other['name'],
                          source=max(origin['id'], 1), source_name=origin['name'] if origin['id'] > 0 else '1')
         record = dict(id=wid, name=name, source=source, source_name=source_name,
                       created=now, used=now, members=[primary, secondary])
+        for member, readable in zip(record['members'], self.workspace_names(record, workspaces)):
+            member['name'] = readable
         # Persist ownership before any compositor change; partial creation stays
         # recoverable. Adoption explicitly authorizes only the starting workspace.
-        if adopt:
-            record['pending_names'] = {str(wid): str(wid)}
+        reused = next((w for w in workspaces if w['id'] == wid), None)
+        companion_reused = next((w for w in workspaces if w['id'] == companion), None)
+        if adopt or reused is not None:
+            record.setdefault('pending_names', {})[str(wid)] = str(wid)
+        if companion_reused is not None:
+            record.setdefault('pending_names', {})[str(companion)] = str(companion)
         self.write(record)
-        if adopt:
+        if adopt or reused is not None:
             self.rename(primary, primary['name'])
+        if companion_reused is not None:
+            self.rename(secondary, secondary['name'])
         self.ensure(record, primary, output, visible=follow)
         self.ensure(record, secondary, other['name'], visible=follow)
-        if window.get('address'):
-            self.move(window, wid)
         if follow:
             self.go(record, output)
+        if window.get('address'):
+            self.move(window, wid)
+            if follow:
+                self.focus(wid)
+                if not self.dry and self.read('activeworkspace')['id'] != wid:
+                    raise TaskError('Started window could not be shown; task retained')
 
     def send(self, record, captured, follow):
-        workspaces = self.snapshot(record)
         monitors = self.outputs()
+        workspaces = self.read('workspaces')
+        if follow:
+            self.go(record, self.screen(captured, monitors, workspaces))
+        workspaces = self.snapshot(record)
         if not monitors:
             raise TaskError('No connected screen')
         output = self.screen(captured, monitors, workspaces)
@@ -307,7 +447,9 @@ class Pair:
         record['used'] = int(time.time())
         self.write(record)
         if follow:
-            self.go(record, output)
+            self.focus(target['id'])
+            if not self.dry and self.read('activeworkspace')['id'] != target['id']:
+                raise TaskError('Sent window could not be shown; task retained')
 
     def task_windows(self, record):
         self.snapshot(record)
@@ -319,12 +461,31 @@ class Pair:
         reserved = {m['id'] for t in records(self.folder, workspaces) for m in t['members']}
         if member['source'] == member['id']:
             return member['id']
-        if member['source'] not in reserved and any(w['id'] == member['source'] and w['name'] == member['source_name'] for w in workspaces):
+        outputs = self.outputs()
+        output = member['output'] if any(m['name'] == member['output'] for m in outputs) else outputs[0]['name']
+        cached = self.return_targets.get(member['id'])
+        if cached and any(w['id'] == cached and w.get('monitor') == output for w in workspaces):
+            return cached
+        if member['source'] not in reserved and any(w['id'] == member['source'] and w['name'] == member['source_name'] and w.get('monitor') == output for w in workspaces):
             return member['source']
-        if 1 not in reserved and not any(w['id'] == 1 and w['name'] != '1' for w in workspaces):
-            return 1
+        # Reuse an empty numbered area on this output, never another screen's
+        # workspace 1. Fresh fallback IDs also avoid configured numeric rules.
+        occupied = {w['workspace']['id'] for w in self.read('clients')}
+        candidates = sorted(w['id'] for w in workspaces if w['id'] > 0 and w['id'] not in reserved
+                            and w['id'] not in occupied and w['name'] == str(w['id']) and w.get('monitor') == output)
+        if candidates:
+            self.return_targets[member['id']] = candidates[0]
+            return candidates[0]
         used = reserved | {w['id'] for w in workspaces}
-        return next(i for i in range(1, len(used) + 2) if i not in used)
+        used.update(int(r['workspaceString']) for r in self.read('workspacerules')
+                    if r.get('enabled') is not False and r.get('workspaceString', '').isdigit())
+        target = next(i for i in range(1, len(used) + 2) if i not in used)
+        self.return_targets[member['id']] = target
+        self.focus(output=output)
+        self.focus(target)
+        if not self.dry and not any(w['id'] == target and w.get('monitor') == output for w in self.read('workspaces')):
+            raise TaskError('Return workspace did not reach its screen; task retained')
+        return target
 
     def finish(self, record):
         wins = self.task_windows(record)
@@ -409,7 +570,10 @@ def main():
     dry, folder, action, *args = sys.argv[1:]
     pair = Pair(dry == 'true', Path(folder))
     if action == 'records':
-        print(json.dumps(records(pair.folder, json.loads(args[0]), pair.dry)))
+        workspaces = json.loads(args[0])
+        tasks = records(pair.folder, workspaces, pair.dry)
+        pair.reconcile(tasks, workspaces)
+        print(json.dumps(records(pair.folder, pair.read('workspaces'), True)))
     elif action == 'labels':
         result = {}
         workspaces = pair.read('workspaces')
@@ -440,6 +604,7 @@ def main():
         elif action == 'rename':
             pair.snapshot(record)
             record['name'] = args[1]
+            pair.readable_members(record, force=True)
             pair.write(record)
 
 
