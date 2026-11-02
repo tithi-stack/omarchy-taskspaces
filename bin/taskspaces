@@ -78,6 +78,8 @@ lua_string() {
   local value=$1
   value=${value//\\/\\\\}
   value=${value//\"/\\\"}
+  # hyprctl routes requests by substring, even inside a Lua string literal.
+  value=${value//\//\\047}
   printf '"%s"' "$value"
 }
 notify() {

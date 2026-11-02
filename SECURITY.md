@@ -13,6 +13,7 @@ Only the latest release receives security fixes.
 
 - Runs local commands only: `hyprctl` (move, rename, focus, and close windows; setup reads bindings and config errors and reloads configuration), `jq`, `python3`, `flock`, Omarchy's menu commands, and a notification command (`omarchy-notification-send`, or `notify-send` as a fallback).
 - Makes no network calls and does not use `sudo`.
+- Window titles are untrusted input: task names are cleaned, quoted as Lua strings, and slashes become three-digit `\047` escapes so hyprctl cannot interpret names as request routes.
 - `taskspaces browser` reads the default browser's desktop entry and `Local State` profile list read-only. It never writes browser files or calls Omarchy's browser launcher, handoff or focus helpers. It starts the supported browser with an explicit profile and `--new-window about:blank`, through `uwsm-app` when available. The launched browser retains its normal file and network behavior; Taskspaces itself makes no network requests.
 - Send, Go and Finish write task records in `$XDG_RUNTIME_DIR/taskspaces/` and a lock file, `$XDG_RUNTIME_DIR/taskspaces.lock`.
 - The plugin never touches your Hyprland files unless you run `taskspaces setup` and choose Yes. Setup edits only `${XDG_CONFIG_HOME:-$HOME/.config}/hypr/bindings.lua` (or the test override `TASKSPACES_BINDINGS_FILE`). It preserves symlinks by updating their target and uses an atomic temporary replacement with the original permissions. It never replaces existing shortcuts.

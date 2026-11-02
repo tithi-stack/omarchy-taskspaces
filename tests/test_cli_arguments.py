@@ -5,6 +5,7 @@ import json
 import os
 import re
 import runpy
+import shutil
 import subprocess
 import unittest
 from unittest.mock import patch
@@ -13,6 +14,54 @@ import test_taskspaces as tasks
 
 
 class CliArgumentTests(unittest.TestCase):
+    def test_mock_rejects_substring_routes_inside_lua_data(self):
+        case = tasks.TaskTests()
+        case.setUp()
+        try:
+            for verb in ('eval', 'dispatch'):
+                for route in ('/--batch;eval os.exit();', '/hyprpaper', '/hyprsunset', '/instances'):
+                    result = subprocess.run([str(case.root / 'bin/hyprctl'), verb,
+                                             'hl.test("Notes' + route + '")'],
+                                            env=case.env, text=True, capture_output=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('request route', result.stdout)
+        finally:
+            case.doCleanups()
+
+    def test_hostile_titles_preserve_names_in_both_lua_quoters(self):
+        lua = runpy.run_path(str(tasks.SCRIPT.with_name('taskspaces-members')))['lua']
+        interpreter = next((path for name in ('lua', 'lua5.4', 'luajit')
+                            if (path := shutil.which(name))), None)
+        for name in ('Notes/--batch;eval os.exit();', 'a/5', 'Report/hyprpaper draft', 'Plain name'):
+            for cls in (tasks.TaskTests, tasks.MultiMonitorTests):
+                case = cls()
+                case.setUp()
+                try:
+                    if cls is tasks.MultiMonitorTests:
+                        case.screens()
+                    case.cfg['activewindow']['title'] = name
+                    case.cfg['select_first'] = True
+                    case.run_task('send')
+                    stored = [json.loads(p.read_text()) for p in case.state.glob('*.json')]
+                    self.assertEqual(stored[0]['name'], name)
+                    codes = [args[1] for args in case.events('hyprctl') if args[0] in ('eval', 'dispatch')]
+                    self.assertTrue(codes)
+                    for code in codes:
+                        self.assertNotIn('/', code[1:])
+                    literal = lua(name)
+                    self.assertEqual(literal, '"' + name.replace('/', r'\047') + '"')
+                    self.assertTrue(any(('name = ' + literal) in code for code in codes))
+                    if interpreter:
+                        result = subprocess.run([interpreter, '-'], input='io.write(' + literal + ')',
+                                                text=True, capture_output=True, check=True)
+                        self.assertEqual(result.stdout, name)
+                    else:
+                        # Exact emitted literals above prove the three-digit form;
+                        # decoding is reasoned from Lua's decimal escape rules.
+                        self.assertNotIn(r'\47', literal)
+                finally:
+                    case.doCleanups()
+
     def test_mock_rejects_option_like_eval_and_dispatch_arguments(self):
         case = tasks.TaskTests()
         case.setUp()
@@ -46,6 +95,7 @@ class CliArgumentTests(unittest.TestCase):
         def checked(pair, kind, code, *args, **kwargs):
             visited.add(inspect.currentframe().f_back.f_lineno)
             self.assertFalse(code.startswith('-'), (kind, code))
+            self.assertNotIn('/', code[1:], (kind, code))
             return original(pair, kind, code, *args, **kwargs)
 
         case = tasks.MultiMonitorTests()
@@ -69,7 +119,7 @@ class CliArgumentTests(unittest.TestCase):
                 pair.go(record)
                 # New rules, owned re-registration, arbitrary name data and both
                 # focus fields; new() chooses its own lowest safe workspace ID.
-                pair.new(5, '--task -j --help', 2, '2', incoming, True, False)
+                pair.new(5, 'Notes/--batch;eval os.exit();', 2, '2', incoming, True, False)
                 new_file = next(p for p in case.state.glob('*.json') if p.name != '3.json')
                 new_record = json.loads(new_file.read_text())
                 pair.send(record, pair.window(incoming), True)
@@ -122,6 +172,7 @@ class CliArgumentTests(unittest.TestCase):
                 self.assertFalse(args[0].startswith('-'))
                 if args[0] in ('eval', 'dispatch'):
                     self.assertFalse(args[1].startswith('-'), args)
+                    self.assertNotIn('/', args[1][1:], args)
             elif command in ('omarchy-notification-send', 'notify-send'):
                 positional = args[2:] if args[:1] == ['-g'] else args
                 self.assertEqual(positional[0], 'taskspaces')

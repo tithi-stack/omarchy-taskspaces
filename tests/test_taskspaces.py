@@ -45,7 +45,16 @@ def refresh_rules():
 def save():
     refresh_rules()
     cfgpath.write_text(json.dumps(cfg))
+def lua_text(value):
+    # The mock parses string literals; it does not execute compositor Lua.
+    return json.loads(re.sub(r'\\([0-9]{1,3})', lambda m: chr(int(m[1])), value))
 if cmd == 'hyprctl':
+    request = ' '.join(args)
+    # Real hyprctl selects these routes by substring before dispatching Lua.
+    for route in ('/--batch', '/hyprpaper', '/hyprsunset', '/instances'):
+        if route in request:
+            print('unexpected hyprctl request route: ' + route)
+            sys.exit(2)
     if args[0] in ('eval', 'dispatch') and args[1].startswith('-'):
         print('usage: hyprctl [flags] [args...|--help]')
         sys.exit(2)
@@ -77,7 +86,7 @@ if cmd == 'hyprctl':
         key = re.search(r'taskspaces:([0-9]+)', code)[1]
         if 'hl.workspace_rule' in code and (key in cfg['owned_rules'] or '; else ' in code):
             wid = int(key)
-            name = re.search(r'default_name = "([^"]+)"', code)[1]
+            name = lua_text('"' + re.search(r'default_name = "([^"]+)"', code)[1] + '"')
             cfg['owned_rules'][key] = name
             rule = next((r for r in cfg['workspacerules'] if r['workspaceString'] == key and r.get('enabled') is not False), None)
             if rule is None:
@@ -85,7 +94,7 @@ if cmd == 'hyprctl':
                 cfg['workspacerules'].append(rule)
             rule.update(enabled=True, persistent=True, defaultName=name)
             binding = re.search(r'monitor = "([^"]+)"', code)
-            if binding: rule['monitor'] = binding[1]
+            if binding: rule['monitor'] = lua_text('"' + binding[1] + '"')
             if not cfg.get('no_persistent_creation') and not any(w['id'] == wid for w in cfg['workspaces']):
                 binding = re.search(r'monitor = "([^"]+)"', code)
                 owner = binding[1] if binding and not cfg.get('ignore_rule_monitor') else next(m for m in cfg['monitors'] if m.get('focused'))['name']
@@ -147,7 +156,7 @@ if cmd == 'hyprctl':
                 if w['address'] == addr:
                     w['workspace'] = dict(next(workspace for workspace in cfg['workspaces'] if workspace['id'] == dest))
         if dsp.startswith('hl.dsp.workspace.rename'):
-            workspace_id, name = map(json.loads, re.search(r'workspace = ("(?:\\.|[^"\\])*"), name = ("(?:\\.|[^"\\])*")', dsp).groups())
+            workspace_id, name = map(lua_text, re.search(r'workspace = ("(?:\\.|[^"\\])*"), name = ("(?:\\.|[^"\\])*")', dsp).groups())
             for w in cfg['workspaces']:
                 if w['id'] == int(workspace_id): w['name'] = name
         if dsp.startswith('hl.dsp.window.close'):
@@ -251,6 +260,13 @@ class TaskTests(unittest.TestCase):
 
     def run_task(self, *args, env=None, code=None, expected=0):
         self.write_cfg()
+        lookup = subprocess.run([BASH, '-c', 'command -v hyprctl'],
+                                env=env or self.env, text=True, capture_output=True)
+        if lookup.returncode == 0:
+            self.assertEqual(Path(lookup.stdout.strip()).resolve(), self.mock.resolve())
+        else:
+            # Dependency/help tests deliberately remove hyprctl from PATH.
+            self.assertEqual(lookup.stdout, '')
         command = [BASH, str(SCRIPT), *args] if code is None else [BASH, '-c', code, '_', str(SCRIPT)]
         result = subprocess.run(command, env=env or self.env, text=True, capture_output=True, timeout=15)
         self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
