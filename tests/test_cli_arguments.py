@@ -14,6 +14,44 @@ import test_taskspaces as tasks
 
 
 class CliArgumentTests(unittest.TestCase):
+    def task_case(self):
+        case = tasks.TaskTests()
+        case.setUp()
+        self.addCleanup(case.doCleanups)
+        return case
+
+    def test_setup_check_needs_no_terminal_runtime_bindings_or_menu_tools(self):
+        case = self.task_case()
+        case.env.pop('XDG_RUNTIME_DIR')
+        case.env['PATH'] = case.isolated_path('check-bin', ('python3', 'hyprctl'))
+        case.env['TASKSPACES_BINDINGS_FILE'] = str(case.root / 'does-not-exist.lua')
+        case.set_settings(first=8)
+        result = case.run_task('setup', '--check')
+        self.assertIn('First task workspace: 8', result.stdout)
+        self.assertIn('Two-screen tasks: disabled (1 connected screens)', result.stdout)
+        self.assertEqual(case.events('omarchy-menu-select'), [])
+        self.assertEqual(list(case.state.iterdir()), [])
+        self.assertTrue(all(a[0] in ('clients', 'monitors', 'workspaces', 'workspacerules')
+                            for a in case.events('hyprctl')))
+
+    def test_setup_check_rejects_extra_or_combined_flags_without_side_effects(self):
+        case = self.task_case()
+        for args in (('--check', '--remove'), ('--check', '--dry-run'), ('--check', '--check'),
+                     ('--check', 'extra'), ('--remove', '--check')):
+            with self.subTest(args=args):
+                result = case.run_task('setup', *args, expected=2)
+                self.assertIn('setup [--remove | --dry-run | --check]', result.stderr)
+        self.assertEqual(case.events(), [])
+        self.assertEqual(list(case.state.iterdir()), [])
+
+    def test_help_describes_read_only_setup_check(self):
+        case = self.task_case()
+        result = case.run_task('--help')
+        self.assertIn('setup [--remove | --dry-run | --check]', result.stdout)
+        self.assertIn('setup --check', result.stdout)
+        self.assertIn('read-only', result.stdout)
+        self.assertEqual(case.events(), [])
+
     def test_mock_rejects_substring_routes_inside_lua_data(self):
         case = tasks.TaskTests()
         case.setUp()

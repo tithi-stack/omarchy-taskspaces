@@ -1072,7 +1072,7 @@ usage() {
     '       taskspaces go [--dry-run]' \
     '       taskspaces forget [--task-id ID] [--dry-run]' \
     '       taskspaces browser' \
-    '       taskspaces setup [--remove | --dry-run]' \
+    '       taskspaces setup [--remove | --dry-run | --check]' \
     '       taskspaces --help | --version'
 }
 show_help() {
@@ -1090,6 +1090,7 @@ show_help() {
     'setup            Offer shortcuts and ask before changing your bindings.' \
     'setup --remove   Back up and remove only shortcuts added by setup.' \
     'setup --dry-run  Ask as usual, then print the block without writing or reloading.' \
+    'setup --check    Show settings and workspace reservations (read-only).' \
     '--dry-run        Print the Hyprland commands instead of running them. Changes no state.' \
     '--version        Print the version.'
 }
@@ -1102,6 +1103,10 @@ main() {
   if [[ ${1:-} == setup ]]; then
     shift
     case $#:${1:-} in
+      1:--check)
+        dry=true
+        state_dir=${XDG_RUNTIME_DIR:+$XDG_RUNTIME_DIR/taskspaces}
+        member_tool diagnose; return $? ;;
       0:|1:--remove|1:--dry-run) desktop_task setup "$@"; return $? ;;
       *) usage >&2; return 2 ;;
     esac

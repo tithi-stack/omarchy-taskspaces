@@ -2504,6 +2504,62 @@ class AllocationBaseTests(unittest.TestCase):
         self.cfg['select_first'] = True
         self.assert_pair_ids(self.new_pair(6), [6, 7])
 
+    def test_reserved_numbers_listing_explains_each_reason_and_free_low_numbers(self):
+        self.paired()
+        self.cfg['workspacerules'] = [dict(workspaceString=str(i), enabled=True) for i in (4, 6)]
+        self.cfg['workspacerules'].append(dict(workspaceString='13', enabled=False))
+        self.cfg['clients'].append(real_window('0x777', 'kitty', 'Own window', 7, '7'))
+        self.cfg['workspaces'].extend([real_workspace(7, '7'), real_workspace(9, 'Kept task', 0),
+                                       dict(real_workspace(10, '10', 0), ispersistent=True),
+                                       real_workspace(11, 'Personal project', 0)])
+        record = dict(id=9, name='Kept task', source=2,
+                      members=[dict(id=9, name='Kept task', output='eDP-1', source=2, source_name='2'),
+                               dict(id=12, name='Kept task ·', output='HDMI-A-1', source=1, source_name='1')])
+        (self.state / '9.json').write_text(json.dumps(record))
+        result = self.run_task('setup', '--check')
+        lines = result.stdout.splitlines()
+        self.assertIn('  First task workspace: 6', lines)
+        self.assertIn('  Two-screen tasks: enabled (2 connected screens)', lines)
+        self.assertIn('  1: reserved (active on HDMI-A-1)', lines)
+        self.assertIn('  2: reserved (active on eDP-1; window present: kitty)', lines)
+        self.assertIn('  3: kept for you (below first task workspace: 6)', lines)
+        self.assertIn('  4: reserved (existing Hyprland rule)', lines)
+        self.assertIn('  6: reserved (existing Hyprland rule)', lines)
+        self.assertIn('  7: reserved (window present: kitty)', lines)
+        self.assertIn('  8: available', lines)
+        self.assertIn('  9: reserved (task member: "Kept task"; renamed workspace: "Kept task")', lines)
+        self.assertIn('  10: reserved (persistent workspace)', lines)
+        self.assertIn('  11: reserved (renamed workspace: "Personal project")', lines)
+        self.assertIn('  12: reserved (task member: "Kept task")', lines)
+        self.assertIn('  13: available', lines)
+        self.assertNotIn('layout rule', result.stdout)
+        self.assertNotIn('Shortcuts:', result.stdout)
+
+    def test_check_does_not_prune_reconcile_or_write_runtime_or_bindings(self):
+        self.paired()
+        self.cfg['workspaces'].append(real_workspace(17, 'taskspaces-99-2', 0))
+        self.cfg['workspacerules'] = [dict(workspaceString='17', enabled=True,
+                                          persistent=True, defaultName='taskspaces-99-2')]
+        (self.state / '99.json').write_text(json.dumps(dict(id=99, name='Gone', source=1)))
+        (self.state / '24.cleanup').write_text('{"id":24}')
+        (self.state / 'broken.json').write_text('{')
+        before = {p.name: p.read_bytes() for p in self.state.iterdir()}
+        shell = self.root / 'config/omarchy/shell.json'
+        config_before = shell.read_bytes()
+        # Interactive setup cannot read a bindings file from this directory.
+        bindings = self.root / 'bindings-not-a-file'
+        bindings.mkdir()
+        self.env['TASKSPACES_BINDINGS_FILE'] = str(bindings)
+        self.run_task('setup', '--check')
+        self.assertEqual({p.name: p.read_bytes() for p in self.state.iterdir()}, before)
+        self.assertEqual(shell.read_bytes(), config_before)
+        self.assertFalse((self.runtime / 'taskspaces.lock').exists())
+        self.assertEqual(self.events('omarchy-menu-select'), [])
+        self.assertEqual(self.events('omarchy-menu-input'), [])
+        self.assertEqual(self.events('omarchy-notification-send'), [])
+        self.assertTrue(all(a[0] in ('clients', 'monitors', 'workspaces', 'workspacerules')
+                            for a in self.events('hyprctl')))
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
